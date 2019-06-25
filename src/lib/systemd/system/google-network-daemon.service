@@ -1,0 +1,14 @@
+[Unit]
+Description=Google Compute Engine Network Daemon
+After=local-fs.target network-online.target network.target rsyslog.service
+After=google-instance-setup.service
+Wants=local-fs.target network-online.target network.target
+Requires=network.target
+PartOf=network.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/google_network_daemon
+
+[Install]
+WantedBy=multi-user.target
