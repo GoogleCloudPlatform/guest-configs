@@ -40,6 +40,5 @@ tar xzvf ${PKGNAME}_${VERSION}.orig.tar.gz
 cd ${PKGNAME}-${VERSION}
 
 cp -r ${working_dir}/packaging/debian ./
-cp -r ${working_dir}/*.service ./debian/
 
 debuild -e "VERSION=${VERSION}" -us -uc

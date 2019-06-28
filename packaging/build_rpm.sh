@@ -31,5 +31,4 @@ tar czvf ${rpm_working_dir}/SOURCES/${PKGNAME}_${VERSION}.orig.tar.gz \
   --exclude .git --exclude packaging --transform "s/^\./${PKGNAME}-${VERSION}/" .
 
 rpmbuild --define "_topdir ${rpm_working_dir}/" --define "_version ${VERSION}" \
-  --define "_go ${GO}" --define "_arch x86_64" --define "_gopath ${GOPATH}" \
   -ba ${rpm_working_dir}/SPECS/${PKGNAME}.spec
