@@ -28,12 +28,13 @@ apt-get update && apt-get -y install debhelper devscripts build-essential dh-gol
 dpkg-checkbuilddeps packaging/debian/control
 
 echo "Building package"
+working_dir=${PWD}
 [[ -d $dpkg_working_dir ]] && rm -rf $dpkg_working_dir
 mkdir $dpkg_working_dir
+cd src
 tar czvf $dpkg_working_dir/${PKGNAME}_${VERSION}.orig.tar.gz --exclude .git \
   --exclude packaging --transform "s/^\./${PKGNAME}-${VERSION}/" .
 
-working_dir=${PWD}
 cd $dpkg_working_dir
 tar xzvf ${PKGNAME}_${VERSION}.orig.tar.gz
 
