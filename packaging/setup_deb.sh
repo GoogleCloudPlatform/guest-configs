@@ -17,6 +17,7 @@ NAME="google-compute-engine"
 VERSION="2.8.16"
 
 working_dir=${PWD}
+# This is a test
 if [[ $(basename "$working_dir") != $NAME ]]; then
   echo "Packaging scripts must be run from top of package dir."
   exit 1
