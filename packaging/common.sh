@@ -15,7 +15,7 @@
 
 set -e
 
-export PKGNAME="google-guest-configs"
+export PKGNAME="google-compute-engine"
 export VERSION="2.8.16"
 
 function exit_error() {
