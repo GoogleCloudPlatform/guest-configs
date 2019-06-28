@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-NAME="google-compute-engine"
+NAME="google-guest-configs"
 VERSION="2.8.16"
 
 rpm_working_dir=/tmp/rpmpackage/${NAME}-${VERSION}

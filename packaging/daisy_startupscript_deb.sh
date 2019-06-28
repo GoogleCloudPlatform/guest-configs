@@ -34,6 +34,6 @@ apt-get install -y git-core
 git_checkout "$BASE_REPO" "$REPO" "$PULL_REF"
 
 ./packaging/build_deb.sh
-gsutil cp /tmp/debpackage/google-osconfig-agent*.deb "${GCS_PATH}/"
+gsutil cp /tmp/debpackage/google-guest-configs*.deb "${GCS_PATH}/"
 
 echo "Package build success: built `echo /tmp/debpackage/*.deb|xargs -n1 basename`"
