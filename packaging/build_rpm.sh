@@ -27,7 +27,7 @@ mkdir -p ${rpm_working_dir}/{SOURCES,SPECS}
 
 # EL6 has a separate .spec file.
 if [[ -e /etc/redhat-release ]] && grep -q release\ 6 /etc/redhat-release; then
-  cp packaging/${PKGNAME}-el6.spec ${rpm_working_dir}/SPECS/${NAME}.spec
+  cp packaging/${PKGNAME}-el6.spec ${rpm_working_dir}/SPECS/${PKGNAME}.spec
 else
   cp packaging/${PKGNAME}.spec ${rpm_working_dir}/SPECS/
 fi
