@@ -25,7 +25,12 @@ yum -y install rpmdevtools
 rm -rf /tmp/rpmpackage
 mkdir -p ${rpm_working_dir}/{SOURCES,SPECS}
 
-cp packaging/${PKGNAME}.spec ${rpm_working_dir}/SPECS/
+# EL6 has a separate .spec file.
+if [[ -e /etc/redhat-release ]] && grep -q release\ 6 /etc/redhat-release; then
+  cp packaging/${PKGNAME}-el6.spec ${rpm_working_dir}/SPECS/${NAME}.spec
+else
+  cp packaging/${PKGNAME}.spec ${rpm_working_dir}/SPECS/
+fi
 
 tar czvf ${rpm_working_dir}/SOURCES/${PKGNAME}_${VERSION}.orig.tar.gz \
   --exclude .git --exclude packaging --transform "s/^\./${PKGNAME}-${VERSION}/" .
