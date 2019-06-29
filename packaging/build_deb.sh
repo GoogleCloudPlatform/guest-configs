@@ -18,6 +18,7 @@ set -e
 DEBIAN_FRONTEND=noninteractive
 dpkg_working_dir="/tmp/debpackage"
 
+#test
 . packaging/common.sh
 
 # Install dependencies.
