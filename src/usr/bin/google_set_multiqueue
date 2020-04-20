@@ -150,7 +150,8 @@ for q in $XPS; do
   xps_dwords=()
   for i in $(seq 0 $(((num_cpus - 1) / 32)))
   do
-    xps_dwords+=(`printf "%08x" $((xps & 0xffffffff))`)
+    xps_dwords=(`printf "%08x" $((xps & 0xffffffff))` "${xps_dwords[@]}")
+    xps=$((xps >> 32))
   done
   xps_string=$(IFS=, ; echo "${xps_dwords[*]}")
 
