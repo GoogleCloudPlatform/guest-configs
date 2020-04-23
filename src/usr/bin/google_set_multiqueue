@@ -125,6 +125,7 @@ done
 
 XPS=/sys/class/net/e*/queues/tx*/xps_cpus
 num_cpus=$(nproc)
+[[ $num_cpus -gt 63 ]] && num_cpus=63
 
 num_queues=0
 for q in $XPS; do
