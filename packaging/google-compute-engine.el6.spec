@@ -15,7 +15,7 @@
 Name: google-compute-engine
 Epoch: 1
 Version: %{_version}
-Release: g2.el6
+Release: g1.el6
 Summary: Google Compute Engine guest environment.
 License: ASL 2.0
 Url: https://github.com/GoogleCloudPlatform/compute-image-packages
@@ -42,7 +42,7 @@ specific to the Google Compute Engine cloud environment.
 %autosetup
 
 %install
-cp -a src/{etc,usr} %{buildroot}
+cp -a src/{etc,usr,sbin} %{buildroot}
 install -d %{buildroot}/lib/
 cp -a src/lib/udev %{buildroot}/lib
 mkdir -p %{buildroot}/etc/dhcp
@@ -51,7 +51,7 @@ ln -sf /usr/bin/google_set_hostname %{buildroot}/etc/dhcp/dhclient-exit-hooks
 %files
 %defattr(0644,root,root,0755)
 %attr(0755,-,-) %{_bindir}/*
-%attr(0755,-,-) %{_sbindir}/*
+%attr(0755,-,-) /sbin/google-dhclient-script
 /lib/udev/rules.d/*
 /etc/dhcp/dhclient-exit-hooks
 %config /etc/modprobe.d/*
