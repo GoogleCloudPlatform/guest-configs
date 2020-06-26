@@ -26,6 +26,7 @@ License: ASL 2.0
 Url: https://github.com/GoogleCloudPlatform/compute-image-packages
 Source0: %{name}_%{version}.orig.tar.gz
 Requires: curl
+Requires: dracut
 Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
 Requires: rsyslog
@@ -52,6 +53,7 @@ cp -a src/lib/udev/rules.d/* %{buildroot}/%{_udevrulesdir}
 %attr(0755,-,-) %{_bindir}/*
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
 %{_udevrulesdir}/*
+%config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
 %config /etc/sysctl.d/*
@@ -73,3 +75,5 @@ if [ $1 -gt 1 ] ; then
   systemctl daemon-reload >/dev/null 2>&1 || :
 fi
 
+%post
+dracut --force
