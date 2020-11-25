@@ -31,6 +31,12 @@ Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
 Requires: rsyslog
 
+# Only require nvme-cli on centos >= 6 and rhel >= 7 as older versions 
+# don't include this package
+%if 0%{?rhel} >= 7
+  Requires: nvme-cli
+%endif
+
 BuildArch: noarch
 
 # Allow other files in the source that don't end up in the package.
