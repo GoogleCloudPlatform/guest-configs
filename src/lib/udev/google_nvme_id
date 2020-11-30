@@ -137,9 +137,9 @@ function gen_symlink() {
   local partition_number="$(get_partition_number "$dev_path")"
 
   if [[ -n "$partition_number" ]]; then
-    ln -s "$dev_path" /dev/disk/by-id/google-persistent-disk-"$ID_SERIAL_SHORT"-part"$partition_number" > /dev/null 2>&1
+    ln -s "$dev_path" /dev/disk/by-id/google-"$ID_SERIAL_SHORT"-part"$partition_number" > /dev/null 2>&1
   else
-    ln -s "$dev_path" /dev/disk/by-id/google-persistent-disk-"$ID_SERIAL_SHORT" > /dev/null 2>&1
+    ln -s "$dev_path" /dev/disk/by-id/google-"$ID_SERIAL_SHORT" > /dev/null 2>&1
   fi
 
   return 0
