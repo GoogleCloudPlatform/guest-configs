@@ -152,14 +152,14 @@ function gen_symlink() {
 # Arguments:
 #   The device path for the disk
 # Returns:
-#   0 on success and 255 if an error occurrs
+#   0 on success and 1 if an error occurrs
 #######################################
 function identify_pd_disk() {
   local dev_path="$1"
   local dev_name
   dev_name="$(get_namespace_device_name "$dev_path")"
   if [[ $? -ne 0 ]]; then
-    return 255
+    return 1
   fi
 
   ID_SERIAL_SHORT="$dev_name"
