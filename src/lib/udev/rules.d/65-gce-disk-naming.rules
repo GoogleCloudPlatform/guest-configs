@@ -24,6 +24,9 @@ KERNEL=="sd*|vd*", IMPORT{program}="scsi_id --export --whitelisted -d $tempnode"
 KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", PROGRAM="/bin/sh -c 'echo $((%n-1))'", ENV{ID_SERIAL_SHORT}="local-nvme-ssd-%c"
 KERNEL=="nvme*", ATTRS{model}=="nvme_card", ENV{ID_SERIAL}="Google_EphemeralDisk_$env{ID_SERIAL_SHORT}"
 
+# NVME Persistent Disk Naming
+KERNEL=="nvme*n*", ATTRS{model}=="nvme_card-pd", IMPORT{program}="google_nvme_id -d $tempnode"
+
 # Symlinks
 KERNEL=="sd*|vd*|nvme*", ENV{DEVTYPE}=="disk", SYMLINK+="disk/by-id/google-$env{ID_SERIAL_SHORT}"
 KERNEL=="sd*|vd*|nvme*", ENV{DEVTYPE}=="partition", SYMLINK+="disk/by-id/google-$env{ID_SERIAL_SHORT}-part%n"

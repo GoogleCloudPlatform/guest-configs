@@ -30,6 +30,7 @@ Requires: dracut
 Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
 Requires: rsyslog
+Requires: nvme-cli
 
 BuildArch: noarch
 
