@@ -47,6 +47,7 @@ install -d %{buildroot}/lib/
 cp -a src/lib/udev %{buildroot}/lib
 mkdir -p %{buildroot}/etc/dhcp
 ln -sf /usr/bin/google_set_hostname %{buildroot}/etc/dhcp/dhclient-exit-hooks
+rm /sr/lib/udev/google_nvme_id
 
 %files
 %defattr(0644,root,root,0755)
