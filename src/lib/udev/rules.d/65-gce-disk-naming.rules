@@ -21,7 +21,7 @@ SUBSYSTEM!="block", GOTO="gce_disk_naming_end"
 KERNEL=="sd*|vd*", IMPORT{program}="scsi_id --export --whitelisted -d $tempnode"
 
 # NVME Local SSD naming
-KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", PROGRAM="/bin/sh -c 'echo $((%n-1))'", ENV{ID_SERIAL_SHORT}="local-nvme-ssd-%c"
+KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", PROGRAM="/bin/sh -c 'echo $$((%n-1))'", ENV{ID_SERIAL_SHORT}="local-nvme-ssd-%c"
 KERNEL=="nvme*", ATTRS{model}=="nvme_card", ENV{ID_SERIAL}="Google_EphemeralDisk_$env{ID_SERIAL_SHORT}"
 
 # NVME Persistent Disk Naming
