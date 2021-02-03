@@ -3,4 +3,5 @@ etc/modprobe.d/*
 etc/rsyslog.d/*
 etc/sysctl.d/*
 lib/udev/rules.d/*
+lib/udev/*
 usr/bin/*
