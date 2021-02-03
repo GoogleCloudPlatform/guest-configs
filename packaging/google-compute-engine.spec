@@ -48,12 +48,14 @@ specific to the Google Compute Engine cloud environment.
 cp -a src/{etc,usr} %{buildroot}
 install -d %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/rules.d/* %{buildroot}/%{_udevrulesdir}
+cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
 
 %files
 %defattr(0644,root,root,0755)
 %attr(0755,-,-) %{_bindir}/*
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
 %{_udevrulesdir}/*
+%{_udevrulesdir}/../google_nvme_id
 %config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
