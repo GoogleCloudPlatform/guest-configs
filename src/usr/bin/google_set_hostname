@@ -20,7 +20,7 @@ if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
   # See: https://github.com/irsl/gcp-dhcp-takeover-code-exec
   if [[ "$new_host_name" =~ "metadata.google.internal" ]]; then
     echo 'not setting invalid hostname'
-    exit 1
+    exit 0
   fi
 
   # Delete entries with new_host_name or new_ip_address in /etc/hosts.
