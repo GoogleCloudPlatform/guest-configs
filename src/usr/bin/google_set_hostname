@@ -16,7 +16,7 @@
 # Deal with a new hostname assignment.
 
 if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
-  # Delete entries with new_host_name or new_ip_address in /etc/hosts.
+  # Delete Google-added entries in /etc/hosts.
   sed -i"" '/Added by Google/d' /etc/hosts
 
   # Don't allow DHCP responses with the MDS as the hostname.
@@ -24,8 +24,8 @@ if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
   if echo "$new_host_name" | grep -iq "metadata.google.internal"; then
     echo "not setting invalid hostname"
   else
-    # Add an entry for our new_host_name/new_ip_address in /etc/hosts.
-    echo "${new_ip_address} ${new_host_name} ${new_host_name%%.*}  # Added by Google" >> /etc/hosts
+    # Add an entry for our new_host_name in /etc/hosts.
+    echo "127.0.0.2 ${new_host_name} ${new_host_name%%.*}  # Added by Google" >> /etc/hosts
   fi
 
   # Add an entry for reaching the metadata server in /etc/hosts.
@@ -48,19 +48,8 @@ if [ -n "$new_host_name" ] && ! echo "$new_host_name" | grep -iq "metadata.googl
   # If NetworkManager is installed set the hostname with nmcli.
   # to resolve issues with NetworkManager resetting the hostname
   # to the FQDN on DHCP renew.
-  nmcli=$(which nmcli 2> /dev/null)
-  if [ -x "$nmcli" ]; then
-    nmcli general hostname "${new_host_name%%.*}"
-  fi
+  nmcli general hostname "${new_host_name%%.*}" >/dev/null 2>&1 || :
 
   # Restart rsyslog to update the hostname.
-  systemctl=$(which systemctl 2> /dev/null)
-  if [ -x "$systemctl" ]; then
-    hasrsyslog=$($systemctl | grep rsyslog | cut -f1 -d' ')
-    if [ ! -z "$hasrsyslog" ]; then
-      $systemctl -q --no-block restart "$hasrsyslog"
-    fi
-  else
-    pkill -HUP syslogd
-  fi
+  systemctl -q --no-block restart rsyslog >/dev/null 2>&1 || :
 fi
