@@ -29,6 +29,7 @@ Requires: curl
 Requires: dracut
 Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
+Requires: rsyslog
 Requires: nvme-cli
 
 BuildArch: noarch
@@ -57,6 +58,7 @@ cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
 %{_udevrulesdir}/../google_nvme_id
 %config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
+%config /etc/rsyslog.d/*
 %config /etc/sysctl.d/*
 
 %pre
