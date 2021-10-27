@@ -55,7 +55,7 @@ cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
 %attr(0755,-,-) %{_bindir}/*
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
 %{_udevrulesdir}/*
-%{_udevrulesdir}/../google_nvme_id
+%attr(0755,-,-) %{_udevrulesdir}/../google_nvme_id
 %config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
