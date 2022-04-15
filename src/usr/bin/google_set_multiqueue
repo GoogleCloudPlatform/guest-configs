@@ -134,6 +134,8 @@ done
 
 # If we have more CPUs than queues, then stripe CPUs across tx affinity
 # as CPUNumber % queue_count.
+# Be aware, striping CPUs across tx queue may not yield best throughput. In that case, only affilliate
+# the CPUs handling tx TRQ to the coresponding tx queue, leave rest of CPUs alone.
 for q in $XPS; do
   queue_re=".*tx-([0-9]+).*$"
   if [[ "$q" =~ ${queue_re} ]]; then
