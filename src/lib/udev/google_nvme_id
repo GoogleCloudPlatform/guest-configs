@@ -13,18 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Used to generate symlinks for PD-NVMe devices using the disk names reported by
-# the metadata server
+# Used to generate symlinks for NVMe devices (both local SSD and
+# persistent disk) using the disk names reported by the metadata server.
 
 # Locations of the script's dependencies
 readonly nvme_cli_bin=/usr/sbin/nvme
 
 # Bash regex to parse device paths and controller identification
+readonly CONTROLLER_NUMBER_REGEX="/dev/nvme([[:digit:]]+)n[[:digit:]]+.*"
 readonly NAMESPACE_NUMBER_REGEX="/dev/nvme[[:digit:]]+n([[:digit:]]+).*"
 readonly PARTITION_NUMBER_REGEX="/dev/nvme[[:digit:]]+n[[:digit:]]+p([[:digit:]]+)"
 readonly PD_NVME_REGEX="sn[[:space:]]+:[[:space]]+nvme_card-pd"
 
-# Globals used to generate the symlinks for a PD-NVMe disk.  These are populated
+# Globals used to generate the symlinks for a NVMe disk.  These are populated
 # by the identify_pd_disk function and exported for consumption by udev rules.
 ID_SERIAL=''
 ID_SERIAL_SHORT=''
@@ -125,6 +126,27 @@ function get_partition_number() {
 }
 
 #######################################
+# Retrieves the controller number for a device path if it exists
+# Globals:
+#   None
+# Arguments:
+#   The path to the device partition (/dev/nvme*n*)
+# Outputs:
+#   The controller id/number
+#######################################
+function get_controller_number() {
+  local dev_path="$1"
+  local controller_number
+  if [[ "$dev_path" =~ $CONTROLLER_NUMBER_REGEX ]]; then
+    controller_number="${BASH_REMATCH[1]}"
+    echo "$controller_number"
+  else
+    echo ''
+  fi
+  return 0
+}
+
+#######################################
 # Generates a symlink for a PD-NVMe device using the metadata's disk name.
 # Primarily used for testing but can be used if the script is directly invoked.
 # Globals:
@@ -152,7 +174,7 @@ function gen_symlink() {
 # Arguments:
 #   The device path for the disk
 # Returns:
-#   0 on success and 1 if an error occurrs
+#   0 on success and 1 if an error occurs
 #######################################
 function identify_pd_disk() {
   local dev_path="$1"
@@ -164,6 +186,34 @@ function identify_pd_disk() {
 
   ID_SERIAL_SHORT="$dev_name"
   ID_SERIAL="Google_PersistentDisk_${ID_SERIAL_SHORT}"
+  return 0
+}
+
+#######################################
+# Populates the ID_* global variables with a disk's device name and namespace
+# Globals:
+#   Populates ID_SERIAL_SHORT, and ID_SERIAL
+# Arguments:
+#   The device path for the disk
+# Returns:
+#   0 on success and 1 if an error occurs
+#######################################
+function identify_local_ssd_disk() {
+  local dev_path="$1"
+  local controller_number
+  controller_number="$(get_controller_number "$dev_path")"
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  local namespace_number
+  namespace_number="$(get_namespace_number "$dev_path")"
+  if [[ $? -ne 0 ]]; then
+    return 1
+  fi
+
+  ID_SERIAL_SHORT="local-nvme-ssd-$(($controller_number+$namespace_number-1))"
+  ID_SERIAL="Google_EphemeralDisk_${ID_SERIAL_SHORT}"
   return 0
 }
 
@@ -218,16 +268,22 @@ script as root/with sudo)."
   # Detect the type of attached nvme device
   local controller_id
   controller_id=$("$nvme_cli_bin" id-ctrl "$device_path")
-  if [[ ! "$controller_id" =~ nvme_card-pd ]] ; then
-    err "Device is not a PD-NVMe device"
+  if [[ "$controller_id" =~ nvme_card-pd ]] ; then
+    # Fill the global variables for the id command for the given disk type
+    # Error messages will be printed closer to error, no need to reprint here
+    identify_pd_disk "$device_path"
+    if [[ $? -ne 0 ]]; then
+      return $?
+    fi
+  elif [[ "$controller_id" =~ nvme_card[0-9]* ]] ; then
+    # It must be a local SSD since it's not PD-NVMe.
+    identify_local_ssd_disk "$device_path"
+    if [[ $? -ne 0 ]]; then
+      return $?
+    fi
+  else
+    err "Device is not a NVMe device"
     return 1
-  fi
-
-  # Fill the global variables for the id command for the given disk type
-  # Error messages will be printed closer to error, no need to reprint here
-  identify_pd_disk "$device_path"
-  if [[ $? -ne 0 ]]; then
-    return $?
   fi
 
   # Gen symlinks or print out the globals set by the identify command
