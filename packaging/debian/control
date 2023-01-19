@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Google Cloud Team <gc-team@google.com>
 Build-Depends: debhelper (>= 10)
 Standards-Version: 3.9.8
-Homepage: https://github.com/GoogleCloudPlatform/compute-image-packages
+Homepage: https://github.com/GoogleCloudPlatform/guest-configs
 
 Package: google-compute-engine
 Architecture: all
