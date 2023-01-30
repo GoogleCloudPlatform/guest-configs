@@ -42,7 +42,7 @@ fi
 # As a result, we set the host name in all circumstances here, to the truncated
 # unqualified domain name.
 
-if [ -n "$new_host_name" ] && ! echo "$new_host_name" | grep -iq "metadata.google.internal"; then
+if [ -n "$new_host_name" ] && ! echo "$new_host_name" | grep -iq "metadata.google.internal" && [ "$new_host_name" != `hostname` ]; then
   hostname "${new_host_name%%.*}"
 
   # If NetworkManager is installed set the hostname with nmcli.
