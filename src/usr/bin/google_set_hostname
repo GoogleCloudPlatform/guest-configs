@@ -39,10 +39,15 @@ fi
 #     some distros (e.g. ssh-keygen) and hostname tool complains when given
 #     a FQDN that is > 64 bytes.
 #
-# As a result, we set the host name in all circumstances here, to the truncated
-# unqualified domain name.
+# As a result, we set the host name whenever a new host name is set - ignoring when
+# old_fqdn is equal to new_host_name, to the truncated unqualified domain name.
 
-if [ -n "$new_host_name" ] && ! echo "$new_host_name" | grep -iq "metadata.google.internal"; then
+hostnamecli=$(which hostname 2> /dev/null)
+if [ -x "$hostnamecli" ]; then
+  old_fqdn=$($hostnamecli -f)
+fi
+
+if [ -n "$new_host_name" ] && [ "$new_host_name" != "$old_fqdn" ] && ! echo "$new_host_name" | grep -iq "metadata.google.internal"; then
   hostname "${new_host_name%%.*}"
 
   # If NetworkManager is installed set the hostname with nmcli.
