@@ -20,6 +20,11 @@ SUBSYSTEM!="block", GOTO="gce_disk_naming_end"
 # SCSI naming
 KERNEL=="sd*|vd*", IMPORT{program}="scsi_id --export --whitelisted -d $tempnode"
 
+# Don't symlink if it's not our devices. This is a fail-safe against these rules
+# running outside of GCP.
+KERNEL=="sd*|vd*", ENV{ID_VENDOR}!="Google", GOTO="gce_disk_naming_end"
+KERNEL=="nvme*", ATTRS{model}!="nvme_card*", GOTO="gce_disk_naming_end"
+
 # NVME Local SSD naming
 KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", PROGRAM="/bin/sh -c 'nsid=$$(echo %k|sed -re s/nvme[0-9]+n\([0-9]+\).\*/\\1/); echo $$((nsid-1))'", ENV{ID_SERIAL_SHORT}="local-nvme-ssd-%c"
 KERNEL=="nvme*", ATTRS{model}=="nvme_card", ENV{ID_SERIAL}="Google_EphemeralDisk_$env{ID_SERIAL_SHORT}"
