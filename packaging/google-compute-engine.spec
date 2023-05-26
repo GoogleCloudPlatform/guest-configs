@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+%global dracutdir %(pkg-config --variable=dracutdir dracut)
+
 # For EL7, if building on CentOS, override dist to be el7.
 %if 0%{?rhel} == 7
   %define dist .el7
@@ -49,8 +51,11 @@ cp -a src/{etc,usr} %{buildroot}
 install -d %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/rules.d/* %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
+install -d  %{buildroot}/%{dracutdir}
+cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 
 %files
+%attr(0755,-,-) /usr/lib/dracut/modules.d/30gcp-udev-rules/module-setup.sh
 %defattr(0644,root,root,0755)
 %attr(0755,-,-) %{_bindir}/*
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
