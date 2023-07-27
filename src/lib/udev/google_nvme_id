@@ -58,7 +58,7 @@ function err() {
 #######################################
 function get_namespace_device_name() {
   local nvme_json
-  nvme_json="$("$nvme_cli_bin" id-ns -b "$1" | xxd -p -seek 384 | xxd -p -r)"
+  nvme_json="$("$nvme_cli_bin" id-ns -b "$1" | dd bs=1 skip=384 2>/dev/null)"
   if [[ $? -ne 0 ]]; then
     return 1
   fi
