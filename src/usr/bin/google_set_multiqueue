@@ -43,6 +43,54 @@ function set_channels() {
   ethtool -L "${1}" combined "${2}" > /dev/null 2>&1
 }
 
+function set_irq_range() {
+  local -r nic="$1"
+  local core="$2"
+
+  # The user may not have this $nic configured on their VM, if not, just skip
+  # it, no need to error out.
+  if [ ! -d "/sys/class/net/"$nic"/device" ]; then
+    return;
+  fi
+
+  # We count the number of rx queues and assume number of rx queues == tx
+  # queues. Currently the GVE configuration at boot is 16 rx + 16 tx.
+  num_q=$(ls -1 /sys/class/net/"$nic"/queues/ | grep rx | wc -l)
+
+  echo "Setting irq binding for "$nic" to core [$core - $((core + num_q - 1))] ..."
+
+  irqs=($(ls /sys/class/net/"$nic"/device/msi_irqs | sort -g))
+  for ((queue = 0; queue < "$num_q"; queue++)); do
+    tx_irq=${irqs[$queue]}
+    rx_irq=${irqs[$((queue + num_q))]}
+
+    # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
+    echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list
+
+    # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
+    echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list
+
+    # XPS (Transmit Packet Steering) allows a core to decide which queue to
+    # select if its mask is found in one of the queue's xps_cpus
+    cp /proc/irq/"$tx_irq"/smp_affinity /sys/class/net/"$nic"/queues/tx-"$queue"/xps_cpus
+
+    echo -en "$nic:q-$queue: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
+    echo -e " \txps_cpus bind to $(cat /sys/class/net/"$nic"/queues/tx-"$queue"/xps_cpus)"
+
+    core=$((core + 1))
+  done
+}
+
+# returns 0 (success) if it's running on a3 platform.
+function is_a3_platform() {
+  machine_type=$(curl -H "Metadata-Flavor: Google" \
+    http://169.254.169.254/computeMetadata/v1/instance/machine-type)
+
+  [[ "$machine_type" == *"a3-highgpu-8g"* ]] || return 1
+
+  return 0
+}
+
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
 
@@ -160,3 +208,70 @@ for q in $XPS; do
   echo ${xps_string} > $q
   printf "Queue %d XPS=%s for %s\n" $queue_num `cat $q` $q
 done | sort -n -k2
+
+if ! is_a3_platform; then
+  exit
+fi
+
+
+# Assign IRQ binding for network interfaces based on pci bus ordering.
+# 
+# Below logics explains how we rank interfaces by pci bus order.
+# > find /sys/class/net -type l | xargs -L 1 realpath | sort
+# /sys/devices/pci0000:00/0000:00:0b.0/net/enp0s11
+# /sys/devices/pci0000:01/0000:01:00.0/0000:02:00.0/0000:03:02.0/0000:06:00.0/net/enp6s0
+# /sys/devices/pci0000:07/0000:07:00.0/0000:08:00.0/0000:09:02.0/0000:0c:00.0/net/enp12s0
+# /sys/devices/pci0000:81/0000:81:00.0/0000:82:00.0/0000:83:02.0/0000:86:00.0/net/enp134s0
+# /sys/devices/pci0000:87/0000:87:00.0/0000:88:00.0/0000:89:02.0/0000:8c:00.0/net/enp140s0
+# /sys/devices/virtual/net/lo
+#
+# > find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo
+# enp0s11
+# enp6s0
+# enp12s0
+# enp134s0
+# enp140s0
+
+# IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
+numa0_irq_start=1
+find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo | while read nic_name; do
+  nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
+  if [[ $nic_numa_node -ne 0 ]]; then
+    continue
+  fi
+
+  nic_num_queues=$(ls -1 /sys/class/net/"$nic_name"/queues/ | grep rx | wc -l)
+  bind_cores_begin=$numa0_irq_start
+  bind_cores_end=$((bind_cores_begin + nic_num_queues))
+
+  if [[ $bind_cores_begin -lt 51 ]] && [[ $bind_cores_end -gt 51 ]]; then
+    bind_cores_begin=104
+    bind_cores_end=$((bind_cores_begin + nic_num_queues))
+  fi
+
+  set_irq_range "$nic_name" "$bind_cores_begin"
+
+  numa0_irq_start=$bind_cores_end
+done
+
+# IRQ binding for numa 1, CPUs [52, 103] and [156, 207] are for numa 1.
+numa1_irq_start=52
+find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo | while read nic_name; do
+  nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
+  if [[ $nic_numa_node -ne 1 ]]; then
+    continue
+  fi
+
+  nic_num_queues=$(ls -1 /sys/class/net/"$nic_name"/queues/ | grep rx | wc -l)
+  bind_cores_begin=$numa1_irq_start
+  bind_cores_end=$((bind_cores_begin + nic_num_queues))
+
+  if [[ $bind_cores_begin -lt 103 ]] && [[ $bind_cores_end -gt 103 ]]; then
+    bind_cores_begin=156
+    bind_cores_end=$((bind_cores_begin + nic_num_queues))
+  fi
+
+  set_irq_range "$nic_name" "$bind_cores_begin"
+
+  numa1_irq_start=$bind_cores_end
+done
