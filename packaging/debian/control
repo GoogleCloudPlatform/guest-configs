@@ -11,7 +11,6 @@ Architecture: all
 Depends: google-compute-engine-oslogin,
          google-guest-agent,
          nvme-cli,
-         xxd,
          ${misc:Depends}
 Recommends: rsyslog | system-log-daemon
 Provides: irqbalance
