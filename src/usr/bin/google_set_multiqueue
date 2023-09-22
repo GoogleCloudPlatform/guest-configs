@@ -234,7 +234,7 @@ fi
 
 # IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
 numa0_irq_start=1
-find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo | while read nic_name; do
+find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 0 ]]; then
     continue
@@ -256,7 +256,7 @@ done
 
 # IRQ binding for numa 1, CPUs [52, 103] and [156, 207] are for numa 1.
 numa1_irq_start=52
-find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo | while read nic_name; do
+find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 1 ]]; then
     continue
