@@ -83,7 +83,7 @@ function set_irq_range() {
 
 # returns 0 (success) if it's running on a3 platform.
 function is_a3_platform() {
-  machine_type=$(curl -H "Metadata-Flavor: Google" \
+  machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
     http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
   [[ "$machine_type" == *"a3-highgpu-8g"* ]] || return 1
