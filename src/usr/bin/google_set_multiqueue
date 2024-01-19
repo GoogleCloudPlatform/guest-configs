@@ -45,7 +45,7 @@ function set_channels() {
 
 function set_irq_range() {
   local -r nic="$1"
-  local core="$2"
+  local bind_cores_begin="$2"
 
   # The user may not have this $nic configured on their VM, if not, just skip
   # it, no need to error out.
@@ -53,16 +53,26 @@ function set_irq_range() {
     return;
   fi
 
+
   # We count the number of rx queues and assume number of rx queues == tx
-  # queues. Currently the GVE configuration at boot is 16 rx + 16 tx.
+  # queues. The number of queues shown in the sysfs stands for the initial
+  # queues while the number of IRQs stands for the max queues. The number of
+  # initial queues should be always less than or equal to that of the max
+  # queues.
+  core=$bind_cores_begin
+  num_irqs=$(( $(ls /sys/class/net/"$nic"/device/msi_irqs | wc -l) / 2 ))
   num_q=$(ls -1 /sys/class/net/"$nic"/queues/ | grep rx | wc -l)
 
   echo "Setting irq binding for "$nic" to core [$core - $((core + num_q - 1))] ..."
 
   irqs=($(ls /sys/class/net/"$nic"/device/msi_irqs | sort -g))
-  for ((queue = 0; queue < "$num_q"; queue++)); do
-    tx_irq=${irqs[$queue]}
-    rx_irq=${irqs[$((queue + num_q))]}
+  for ((irq = 0; irq < "$num_irqs"; irq++)); do
+    tx_irq=${irqs[$irq]}
+    rx_irq=${irqs[$((irq + num_irqs))]}
+
+    # Only allocate $num_q cores to the IRQs and queues. If the number of IRQs
+    # is more than that of queues, the CPUs will be wrapped around.
+    core=$(( bind_cores_begin + irq % num_q ))
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
     echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list
@@ -70,23 +80,32 @@ function set_irq_range() {
     # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
     echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list
 
-    # XPS (Transmit Packet Steering) allows a core to decide which queue to
-    # select if its mask is found in one of the queue's xps_cpus
-    cp /proc/irq/"$tx_irq"/smp_affinity /sys/class/net/"$nic"/queues/tx-"$queue"/xps_cpus
+    # Check if the queue exists at present because the number of IRQs equals
+    # the max number of queues allocated and could be greater than the current
+    # number of queues.
+    tx_queue=/sys/class/net/"$nic"/queues/tx-"$irq"
+    if ls $tx_queue 1> /dev/null 2>&1; then
+      # XPS (Transmit Packet Steering) allows a core to decide which queue to
+      # select if its mask is found in one of the queue's xps_cpus
+      cp /proc/irq/"$tx_irq"/smp_affinity $tx_queue/xps_cpus
 
-    echo -en "$nic:q-$queue: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
-    echo -e " \txps_cpus bind to $(cat /sys/class/net/"$nic"/queues/tx-"$queue"/xps_cpus)"
+      echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
+      echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)"
+    else
+      echo -e "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
+    fi
 
-    core=$((core + 1))
   done
 }
 
-# returns 0 (success) if it's running on a3 platform.
+# returns 0 (success) if it's running on a3 or a3plus platform.
 function is_a3_platform() {
   machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
     http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
-  [[ "$machine_type" == *"a3-highgpu-8g"* ]] || return 1
+  [[ "$machine_type" == *"a3-highgpu-8g"* \
+  || "$machine_type" == *"a3-ultragpu-8g"* \
+  || "$machine_type" == *"a3-megagpu-8g"* ]] || return 1
 
   return 0
 }
