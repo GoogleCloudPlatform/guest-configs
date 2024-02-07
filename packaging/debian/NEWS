@@ -1,0 +1,22 @@
+gce-compute-image-packages (20200626.00-0ubuntu1) groovy; urgency=medium
+
+  Google Compute Engine's upstream compute-image-packages project
+  repository [1] has been split up to smaller ones [2] and this incurs
+  the following packaging changes:
+
+  - The Python libraries packaged as python3-google-compute-engine are
+    not shipped anymore and the Guest Agent (written in Go) functionality
+    and services are provided in the google-guest-agent package.
+
+  - The libraries, applications and configurations for using OS Login is
+    still shipped in the google-compute-engine-oslogin package.
+    (It is built from the new google-compute-engine-oslogin source package).
+
+  - The scripts and configuration files originally shipped by the
+    gce-compute-image-packages package are now shipped in the
+    google-compute-engine package.
+
+  [1] https://github.com/GoogleCloudPlatform/compute-image-packages
+  [2] https://bugs.launchpad.net/ubuntu/+bug/1870314/comments/2
+
+ -- Balint Reczey <rbalint@ubuntu.com>  Thu, 26 Nov 2020 16:15:41 +0100

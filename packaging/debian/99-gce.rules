@@ -1,0 +1,5 @@
+# Give syslog write access to the kernel logs
+KERNEL=="console", GROUP="syslog", MODE="0620"
+
+# Force "NONE" I/O scheduler on HDDs only to enhance boot speeds
+SUBSYSTEM=="block", ENV{DEVTYPE}!="partition", ACTION=="add|change", ENV{ID_VENDOR}=="*Google*", ATTR{queue/rotational}=="1", ATTR{queue/scheduler}="none"

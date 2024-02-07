@@ -1,0 +1,11 @@
+# preinst performs the transition from obsolete systemd services manually
+google-compute-engine: maintainer-script-calls-systemctl preinst
+# upstream does not provide manpages for those instrastructure scripts
+google-compute-engine: binary-without-manpage usr/bin/google_optimize_local_ssd
+google-compute-engine: binary-without-manpage usr/bin/google_set_multiqueue
+google-compute-engine: no-manual-page usr/bin/google_set_hostname
+# this is indeed unusual but also intentional
+google-compute-engine: systemd-service-file-refers-to-unusual-wantedby-target lib/systemd/system/google-instance-setup.service sshd.service
+# systemd services are cleaned up manually and this is how upstream does it
+google-compute-engine: maintainer-script-calls-systemctl preinst*
+
