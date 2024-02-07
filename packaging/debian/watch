@@ -1,0 +1,10 @@
+# Compulsory line, this is a version 4 file
+version=4
+
+opts=\
+compression=xz,\
+dversionmangle=s/[-.+~]?(git|snapshot|repack|dfsg)(.*)$//i,\
+filenamemangle=s/.+\/v?(\d\S*)\.tar\.gz/gce-compute-image-packages-$1\.tar\.gz/,\
+repack,\
+repacksuffix=+dfsg1 \
+ https://github.com/GoogleCloudPlatform/guest-configs/tags .*/v?(\d\S*)\.tar\.gz
