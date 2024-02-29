@@ -62,7 +62,8 @@ if [ -n "$new_host_name" ] && [ "${new_host_name%%.*}" != "$old_hostname" ] && !
   # Restart rsyslog to update the hostname.
   systemctl=$(which systemctl 2> /dev/null)
   if [ -x "$systemctl" ]; then
-    hasrsyslog=$($systemctl | grep rsyslog | cut -f1 -d' ')
+	# See man 5 systemd.unit for systemd unit naming rules
+    hasrsyslog=$($systemctl | grep rsyslog | grep -oE '[a-zA-Z0-9:-_.\]+\.(service|socket|device|mount|automount|swap|target|path|timer|slice|scope)')
     if [ ! -z "$hasrsyslog" ]; then
       $systemctl -q --no-block restart "$hasrsyslog"
     fi
