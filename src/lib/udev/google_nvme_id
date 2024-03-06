@@ -69,7 +69,7 @@ function get_namespace_device_name() {
   fi
 
   local device_name
-  device_name="$(echo "$nvme_json" | grep device_name | sed -e 's/.*"device_name":[  \t]*"\([a-zA-Z0-9_-]\+\)".*/\1/')"
+  device_name="$(echo "$nvme_json" | grep device_name | sed -e 's/.*"device_name":[  \t]*"\([.a-zA-Z0-9_-]\+\)".*/\1/')"
 
   # Error if our device name is empty
   if [[ -z "$device_name" ]]; then
