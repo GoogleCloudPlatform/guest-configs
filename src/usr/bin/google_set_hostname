@@ -13,6 +13,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This file previously handled setting the hostname. This functionality and the
+# ability to configure it has been moved to the guest-agent. This script retains
+# legacy behavior in some cases for compatibility, otherwise it sends arguments
+# to the guest-agent network event socket to be interpreted as event names. See
+# https://github.com/GoogleCloudPlatform/guest-agent/tree/main/google_guest_agent/events#built-in-watchers
+# for a list of events.
+
+retain_legacy_behavior() {
+# If the file is not being called by its old name, don't retain legacy behavior
+	if [ $(basename $0) != "google_set_hostname" ];then
+		return 1
+	fi
+# Don't retain legacy behavior if set_hostname or set_fqdn has been enabled in
+# the agent.
+	if google_guest_agent get_config_option NetworkInterfaces.SetHostname | grep -i true >/dev/null || google_guest_agent get_config_option NetworkInterfaces.SetFqdn | grep -i true>/dev/null; then
+		return 1
+	fi
+# Otherwise default to legacy behavior
+	return 0
+}
+
+if ! retain_legacy_behavior;then
+	EVENT_SOCK="/run/google-guest-agent/network-events.sock"
+	test -S $EVENT_SOCK
+	ret=$?
+	if [ $ret -ne 0 ];then
+	  echo "Could not find guest-agent's network events socket. The agent may not be listening."
+	  exit 1
+	fi
+	exec echo "$@" > $EVENT_SOCK
+fi
+
 # Deal with a new hostname assignment.
 
 if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then

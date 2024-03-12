@@ -85,3 +85,4 @@ fi
 
 %post
 dracut --force
+grep 'POST_UP_SCRIPT="compat:suse:google_up.sh"' /etc/sysconfig/network/config >/dev/null || echo 'POST_UP_SCRIPT="compat:suse:google_up.sh"' >> /etc/sysconfig/network/config
