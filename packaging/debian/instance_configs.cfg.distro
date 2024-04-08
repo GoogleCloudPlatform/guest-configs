@@ -1,0 +1,5 @@
+[Accounts]
+groups = ubuntu,adm,dialout,cdrom,floppy,audio,dip,video,plugdev,netdev,lxd
+
+[InstanceSetup]
+set_host_keys = false
