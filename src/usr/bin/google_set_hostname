@@ -59,6 +59,11 @@ if [ -n "$new_host_name" ] && [ "${new_host_name%%.*}" != "$old_hostname" ] && !
     nmcli general hostname "${new_host_name%%.*}"
   fi
 
+  hostnamectl=$(which hostnamectl 2> /dev/null)
+  if [ -x "$hostnamectl" ]; then
+    hostnamectl hostname "${new_host_name%%.*}"
+  fi
+
   # Restart rsyslog to update the hostname.
   systemctl=$(which systemctl 2> /dev/null)
   if [ -x "$systemctl" ]; then
