@@ -3,6 +3,7 @@ etc/modprobe.d/*
 etc/rsyslog.d/*
 etc/sysctl.d/*
 etc/NetworkManager/dispatcher.d/*
+usr/lib/networkd-dispatcher/*
 lib/udev/rules.d/*
 lib/udev/*
 usr/bin/*
