@@ -86,3 +86,4 @@ fi
 
 %post
 dracut --force
+

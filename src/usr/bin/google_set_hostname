@@ -13,6 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This file previously handled setting the hostname. This functionality and the
+# ability to configure it has been moved to the guest-agent. This script retains
+# legacy behavior in some cases for compatibility.
+
+retain_legacy_behavior() {
+	# Don't retain legacy behavior if set_hostname or set_fqdn has been enabled in
+	# the agent.
+	if google_guest_agent sendcmd '{"Command":"agent.config.getoption","Option":"Unstable.SetHostname"}' | grep '"Value":"true"' >/dev/null || google_guest_agent sendcmd '{"Command":"agent.config.getoption","Option":"Unstable.SetFqdn"}' | grep -i '"Value":"true"' >/dev/null; then
+		return 1
+	fi
+	return 0
+}
+
+if ! retain_legacy_behavior;then
+	exec google_guest_agent sendcmd '{"Command":"agent.hostname.reconfigurehostname"}'
+fi
+
 # Deal with a new hostname assignment.
 
 if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
