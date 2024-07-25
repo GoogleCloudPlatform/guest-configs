@@ -61,7 +61,8 @@ if [ -n "$new_host_name" ] && [ "${new_host_name%%.*}" != "$old_hostname" ] && !
 
   hostnamectl=$(which hostnamectl 2> /dev/null)
   if [ -x "$hostnamectl" ]; then
-    hostnamectl hostname "${new_host_name%%.*}"
+    # based on the hostnamectl command, attempt to use hostname otherwise fall back to set-hostname
+    hostnamectl hostname "${new_host_name%%.*}" || hostnamectl set-hostname "${new_host_name%%.*}"
   fi
 
   # Restart rsyslog to update the hostname.
