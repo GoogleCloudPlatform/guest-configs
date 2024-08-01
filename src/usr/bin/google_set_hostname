@@ -15,6 +15,30 @@
 
 # Deal with a new hostname assignment.
 
+# Legacy behavior is this script setting the hostname and fqdn directly.
+# New behavior is to notify the agent when they should be updated.
+#
+# New behavior should be used (and this function returns 1) when the agent
+# is new enough to include the ggactl utility and the agent configuration
+# enables the SetFQDN or SetHostname options
+retain_legacy_behavior() {
+	ggactl=$(which ggactl 2> /dev/null)
+	if [ -z "$ggactl" ]; then
+		# Agent doesn't have ggactl for communication, legacy behavior.
+		return 0
+	fi
+	# Don't retain legacy behavior if set_hostname or set_fqdn is enabled in
+	# the agent.
+	if ggactl coreplugin send '{"Command":"agent.config.getoption","Option":"Unstable.SetHostname"}' | grep '"Value":"true"' >/dev/null || ggactl coreplugin send '{"Command":"agent.config.getoption","Option":"Unstable.SetFQDN"}' | grep -i '"Value":"true"' >/dev/null; then
+		return 1
+	fi
+	return 0
+}
+
+if ! retain_legacy_behavior; then
+	exec ggactl coreplugin send '{"Command":"agent.hostname.reconfigurehostname"}'
+fi
+
 if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
   # Delete entries with new_host_name or new_ip_address in /etc/hosts.
   sed -i"" '/Added by Google/d' /etc/hosts
