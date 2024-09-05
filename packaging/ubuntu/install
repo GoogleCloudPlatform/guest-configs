@@ -1,0 +1,12 @@
+# Upstream-provided configuration
+src/etc/apt/apt.conf.d/* etc/apt/apt.conf.d
+src/etc/modprobe.d/* etc/modprobe.d
+src/etc/rsyslog.d/* etc/rsyslog.d
+src/etc/sysctl.d/* etc/sysctl.d
+src/lib/udev/* lib/udev
+src/usr/bin/* usr/bin
+
+# Ubuntu-specific configuration
+debian/instance_configs.cfg.distro etc/default
+debian/91-gce.cfg etc/cloud/cloud.cfg.d
+debian/99-gce.rules lib/udev/rules.d
