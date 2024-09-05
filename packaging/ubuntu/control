@@ -1,0 +1,42 @@
+Source: gce-compute-image-packages
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Section: admin
+Priority: optional
+Build-Depends: debhelper (>= 9.20160709),
+Standards-Version: 3.9.8
+Vcs-Browser: https://code.launchpad.net/~ubuntu-core-dev/+git/gce-compute-image-packages
+Vcs-Git: https://git.launchpad.net/~ubuntu-core-dev/+git/gce-compute-image-packages -b ubuntu/master
+Homepage: https://github.com/GoogleCloudPlatform/compute-image-packages
+XSBC-Original-Maintainer: Daniel Watkins <daniel.watkins@canonical.com>
+
+Package: google-compute-engine
+Architecture: all
+Depends: ${misc:Depends},
+         google-compute-engine-oslogin (>> 20190801),
+         google-guest-agent,
+         nvme-cli,
+         ${misc:Depends}
+Provides: irqbalance
+Recommends: rsyslog | system-log-daemon
+Suggests: libpam-cracklib
+Conflicts: gce-cloud-config,
+           gce-daemon,
+           gce-startup-scripts,
+           gce-compute-image-packages (<< 20191115)
+Replaces: gce-cloud-config,
+          gce-daemon,
+          gce-startup-scripts,
+          gce-compute-image-packages (<< 20191115)
+Description: Google Compute Engine guest environment.
+ This package contains scripts and configuration files for
+ features specific to the Google Compute Engine cloud environment.
+
+Package: gce-compute-image-packages
+Architecture: all
+Depends: ${misc:Depends},
+         google-compute-engine
+Description: transitional dummy package
+ This dummy package is provided for a smooth transition from the
+ previous old package name to google-compute-engine.
+ .
+ It may be safely removed after installation.
