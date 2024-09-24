@@ -5,6 +5,7 @@ src/etc/rsyslog.d/* etc/rsyslog.d
 src/etc/sysctl.d/* etc/sysctl.d
 src/lib/udev/* lib/udev
 src/usr/bin/* usr/bin
+src/usr/lib/networkd-dispatcher/* usr/lib/networkd-dispatcher
 
 # Ubuntu-specific configuration
 debian/instance_configs.cfg.distro etc/default
