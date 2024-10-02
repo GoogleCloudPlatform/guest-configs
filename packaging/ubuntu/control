@@ -15,6 +15,7 @@ Depends: ${misc:Depends},
          google-compute-engine-oslogin (>> 20190801),
          google-guest-agent,
          nvme-cli,
+         jq,
          ${misc:Depends}
 Provides: irqbalance
 Recommends: rsyslog | system-log-daemon
