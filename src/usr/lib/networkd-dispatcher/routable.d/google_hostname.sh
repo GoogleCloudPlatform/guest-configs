@@ -12,7 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
-
-new_host_name=$(curl -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/hostname)
-new_ip_address=$ADDR new_host_name=$new_host_name google_set_hostname
+instance=$(curl -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/?recursive=true)
+new_ip_address=$(jq -r .networkInterfaces[0].ip <<< $instance) new_host_name=$(jq -r .hostname <<< $instance) google_set_hostname
 
