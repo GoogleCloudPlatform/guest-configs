@@ -33,6 +33,7 @@ Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
 Requires: rsyslog
 Requires: nvme-cli
+Requires: jq
 
 BuildArch: noarch
 
