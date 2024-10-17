@@ -4,6 +4,7 @@ etc/rsyslog.d/*
 etc/sysctl.d/*
 etc/NetworkManager/dispatcher.d/*
 usr/lib/networkd-dispatcher/*
+etc/systemd/resolved.conf.d/*
 lib/udev/rules.d/*
 lib/udev/*
 usr/bin/*

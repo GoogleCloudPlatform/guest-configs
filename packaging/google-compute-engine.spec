@@ -67,6 +67,7 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
 %config /etc/sysctl.d/*
+%config /etc/systemd/resolved.conf.d/*
 
 %pre
 if [ $1 -gt 1 ] ; then
