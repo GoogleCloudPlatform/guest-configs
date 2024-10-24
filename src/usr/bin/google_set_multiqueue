@@ -123,8 +123,7 @@ function is_gvnic() {
   return 0
 }
 
-# echo "Running $(basename $0)."
-
+echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
 
 # Loop through all the virtionet devices and enable multi-queue
