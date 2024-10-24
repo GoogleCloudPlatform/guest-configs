@@ -33,6 +33,7 @@ Requires: google-compute-engine-oslogin
 Requires: google-guest-agent
 Requires: rsyslog
 Requires: nvme-cli
+Requires: jq
 
 BuildArch: noarch
 
@@ -66,6 +67,7 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
 %config /etc/sysctl.d/*
+%config /etc/systemd/resolved.conf.d/*
 
 %pre
 if [ $1 -gt 1 ] ; then

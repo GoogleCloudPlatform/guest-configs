@@ -16,6 +16,8 @@
 # For a single-queue / no MSI-X virtionet device, sets the IRQ affinities to
 # processor 0. For this virtionet configuration, distributing IRQs to all
 # processors results in comparatively high cpu utilization and comparatively
+
+
 # low network bandwidth.
 #
 # For a multi-queue / MSI-X virtionet device, sets the IRQ affinities to the
@@ -108,7 +110,6 @@ function is_a3_platform() {
   || "$machine_type" == *"a3-megagpu-8g"* \
   || "$machine_type" == *"a3-edgegpu-8g"* \
   || "$machine_type" == *"a3-ultragpu-"* ]] || return 1
-
   return 0
 }
 
