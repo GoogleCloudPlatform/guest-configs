@@ -1,0 +1,486 @@
+#!/bin/bash
+#
+# This script is used to generate the network device name for a given device.
+
+# Generate a instance specific tag for logging to journal
+readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
+
+# Path to the PCI bus devices
+declare PCI_BUS_PATH='/sys/bus/pci/devices'
+declare SYS_PREPEND_PATH='/sys'
+# 0x15b3 is the vendor ID for Mellanox
+readonly ETHERNET_DEVICES_VENDORS=('15b3' '8086')
+# 0x10de is the vendor ID for Nvidia
+readonly GPU_DEVICES_VENDORS=('10de')
+# PCI BUS ID path is in the format of 0000:00:04.0
+readonly PCI_ID_REGEX='[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+'
+
+# Array of devices by with vendor info
+declare -a ethernet_devices
+declare -a accelerator_devices
+
+# Ratio of Processor to Ethernet devices
+declare -i ethernet_to_accelerator_ratio=1
+declare -i accelerator_to_ethernet_ratio=1
+
+# Log the specific run's tag
+# Find latest runs in journal with journalctl -e -t gce-nic-naming
+# Then you can use the name to search for a specific run
+logger -t "gce-nic-naming" -p local0.info "Run ${LOG_TAG}"
+
+###############################
+# Log error and exit with -1
+# Environment:
+#   ID_NET_NAME_PATH: net_id name based off of PCI path in form enp##s#
+# Arguments:
+#   $1: Error message
+###############################
+function error_and_exit() {
+  # Default to the network name if it exists.
+  # If script is run and returns empty or invalid name, UDev defaults to normal
+  # name the system would create as if this rule does not exist.
+  echo "$ID_NET_NAME_PATH"
+  err "$@"
+  logger -t "${LOG_TAG}" -p local0.notice \
+    "Defaulting to name: ${ID_NET_NAME_PATH}"
+  # Script must exit with 0 or rule will be ignored.
+  exit 0
+}
+
+###############################
+# Log error to STDERR
+# Globals
+#   LOG_TAG: Tag to use for logging
+# Arguments:
+#   $@: Error message
+###############################
+function err() {
+  logger -t "${LOG_TAG}" -p local0.err --stderr "$@"
+}
+
+###############################
+# Log debug message to journal
+# Globals
+#   LOG_TAG: Tag to use for logging
+# Arguments:
+#   $@: Debug message
+###############################
+function debug() {
+  logger -t "${LOG_TAG}" -p local0.debug "$@"
+}
+
+###############################
+# Log info message to journal
+# Globals
+#   LOG_TAG: Tag to use for logging
+# Arguments:
+#   $@: Info message
+###############################
+function info() {
+  logger -t "${LOG_TAG}" -p local0.info "$@"
+}
+
+###############################
+# Log info message to journal
+# Globals
+#   LOG_TAG: Tag to use for logging
+# Arguments:
+#   $@: Info message
+###############################
+function notice() {
+  logger -t "${LOG_TAG}" -p local0.notice "$@"
+}
+
+
+###############################
+# Determine the ratio of Processor to Ethernet devices
+# Globals:
+#   ethernet_devices: Array of ethernet devices
+#   accelerator_devices: Array of processor devices
+#   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
+#   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
+# Arguments:
+#   None
+##############################
+function determine_index_ratios() {
+  ethernet_to_accelerator_ratio="$(( ${#ethernet_devices[@]} / ${#accelerator_devices[@]} ))"
+  accelerator_to_ethernet_ratio="$(( ${#accelerator_devices[@]} / ${#ethernet_devices[@]} ))"
+  debug "ethernet_to_accelerator_ratio: ${ethernet_to_accelerator_ratio}"
+  debug "accelerator_to_ethernet_ratio: ${accelerator_to_ethernet_ratio}"
+}
+
+###############################
+# List all devices on the PCI bus and add them to the appropriate array
+# based on their vendor
+# Globals:
+#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#     relevant to intent based naming
+#   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
+#     naming
+#   ethernet_devices: Array of ethernet devices
+#   accelerator_devices: Array of processor devices
+#   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
+# Arguments:
+#   $1: Name refernece to the array of ethernet devices
+#   $2: Name reference to the array of processor devices
+#   $@: Paths to search for devices
+###############################
+function list_devices() {
+  local -n ethernet_map="$1"
+  local -n accelerator_map="$2"
+  shift
+  shift
+  local paths=("$@")
+
+  info "Generating for paths: ${paths[*]}"
+  unset IFS
+
+  # Walks the pci device bus and looks for any relevant devices
+  for pci_device in ${paths}; do
+    # Example: 0000:00:04.0
+    local -i int_id=$(get_id_from_path "${pci_device}")
+    local vendor=$(cat "${pci_device}/vendor")
+    vendor="${vendor#0x}"
+    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${vendor}[[:space:]] ]]; then
+      ethernet_map[${int_id}]=${vendor}
+    fi
+
+    if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${vendor}[[:space:]] ]]; then
+      accelerator_map[${int_id}]=${vendor}
+    fi
+  done
+  debug $(printf "Generated ethernet_devices_map: %s %s" "${!ethernet_map[*]}" \
+    "${ethernet_map[*]}")
+  debug $(printf "Generated accelerator_devices_map: %s %s" "${!accelerator_map[*]}" \
+    "${accelerator_map[*]}")
+}
+
+###############################
+# Walks up device tree until it finds devices that match device ratios
+#
+# Runs recursively up device tree starting from DEVPATH
+# Globals:
+#   bus_specific_ethernet_device_map: Array of ethernet devices
+#   bus_specific_accelerator_device_map: Array of processor devices
+#   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
+#   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
+# Arguments:
+#   $1: Path to search for devices
+###############################
+function gather_lowest_denominator_devices() {
+  local path=$1
+
+  # Clear the arrays
+  unset bus_specific_ethernet_device_map
+  unset bus_specific_accelerator_device_map
+  declare -ga bus_specific_ethernet_device_map
+  declare -ga bus_specific_accelerator_device_map
+
+  if [[ "${path}" == "" ]]; then
+    error_and_exit "Empty path"
+  fi
+
+  # Search for all vendor files at an equivalent depth to the device then remove
+  #/vendor from the found paths
+  # Find is not order guaranteed so sort the output
+  local output=$(find ${path} -name "vendor" | sort | sed 's;/vendor;;g')
+
+  if [[ $? -ne 0 ]]; then
+    error_and_exit "Find failed: ${path}"
+  fi
+
+  local -i line_count=0
+  if [[ ${output} != "" ]]; then
+    line_count=$(wc -l <<< "${output}")
+  fi
+
+  if [[ ${line_count} -gt 1 ]]; then
+    # build array
+    # NOTE: Calling in a $() will not modify the array in this instance
+    list_devices bus_specific_ethernet_device_map bus_specific_accelerator_device_map "${output}"
+
+    if [[ ${#bus_specific_ethernet_device_map[@]} -ne 0 ]] && [[ ${#bus_specific_accelerator_device_map[@]} -ne 0 ]]; then
+
+
+      local -i eth_to_acc_ratio="$(( ${#bus_specific_ethernet_device_map[@]} / ${#bus_specific_accelerator_device_map[@]} ))"
+      local -i acc_to_eth_ratio="$(( ${#bus_specific_accelerator_device_map[@]} / ${#bus_specific_ethernet_device_map[@]} ))"
+
+      if [[ ${eth_to_acc_ratio} -eq ${ethernet_to_accelerator_ratio} ]] || [[ ${acc_to_eth_ratio} -eq ${accelerator_to_ethernet_ratio} ]]; then
+        return
+      fi
+      debug "Ratios do not match: ${eth_to_acc_ratio} ${acc_to_eth_ratio} continuning"
+    fi
+  fi
+  gather_lowest_denominator_devices "${path%/*}"
+}
+
+###############################
+# Get the index of a given value in an array
+# Globals:
+#   None
+# Arguments:
+#   $1: Key value to search for
+#   $@: Array to search
+# Outputs:
+#   Index of the value in the array
+###############################
+function get_index() {
+  local key_value=$1
+  shift
+  local array=("$@")
+  local -i index=0
+  for i in "${array[@]}"; do
+    if [[ "$i" = "${key_value}" ]]; then
+      echo ${index}
+      return
+    fi
+    index="$((index + 1))"
+  done
+  echo -1
+}
+
+###############################
+# Get the value of a given index in an array
+# Globals:
+#   None
+# Arguments:
+#   $1: Index value to search for
+#   $@: Array to search
+# Outputs:
+#   Value of the index in the array
+###############################
+function get_value_by_index() {
+  local -i index=$1
+  shift
+  local array=("$@")
+  local -i count_index=0
+  for i in "${array[@]}"; do
+    if [[ ${count_index} -eq ${index} ]]; then
+      echo "$i"
+      return
+    fi
+    count_index="$((count_index + 1))"
+  done
+}
+
+###############################
+# Get the id of a device from the path
+# Globals:
+#   PCI_ID_REGEX: Regex to search for the id
+# Arguments:
+#   $1: Path to search for the id
+#    Example path:
+#    DEVPATH=/devices/pci0000:88/0000:88:00.0/0000:89:00.0/0000:8a:03.0/0000:8e:00.0/net/eth9
+# Outputs:
+#   Id of the device
+###############################
+function get_id_from_path() {
+  # Example path:
+  # DEVPATH=/devices/pci0000:88/0000:88:00.0/0000:89:00.0/0000:8a:03.0/0000:8e:00.0/net/eth9
+  # Last part of the path is the ID. (00008e000)
+  local path=$1
+  #local path_id=$(echo "${path}" | grep -oe "${PCI_ID_REGEX}" | tail -1 )
+  # Use bash built in regex to get all values matching the PCI ID pattern
+  local path_id=$(while [[ $path =~ $PCI_ID_REGEX ]]; do
+    echo "${BASH_REMATCH[0]}"
+    path="${path#*${BASH_REMATCH[0]}}"
+  done | tail -n 1 )
+
+  # Bash replacement does not work with the regex values
+  local hex_id="${path_id//[:.]/}"
+  local -i int_id="$((0x$hex_id))"
+  echo ${int_id}
+}
+
+################################
+# Get the index of the accelerator device based on the ethernet device index
+# Globals:
+#   bus_specific_ethernet_device_map: Array of ethernet devices
+#   bus_specific_accelerator_device_map: Array of processor devices
+#   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
+#   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
+# Arguments:
+#   $1: PCI ID of the ethernet device
+# Outputs:
+#   Index of the accelerator device
+#################################
+function get_accelerator_index() {
+  local -i eth_id=${1}
+  local -i eth_index="$(get_index ${eth_id} "${!bus_specific_ethernet_device_map[@]}")"
+
+  if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
+    local -i gpu_index=$((${eth_index} / ${ethernet_to_accelerator_ratio}))
+  elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
+    local -i gpu_index="$((${eth_index} * ${accelerator_to_ethernet_ratio}))"
+  else
+    # Should never get here.
+    error_and_exit "No index ratios found"
+  fi
+
+  local -i accelerator_id=$(get_value_by_index ${gpu_index} "${!bus_specific_accelerator_device_map[@]}")
+  echo $(get_index ${accelerator_id} "${!accelerator_devices[@]}")
+}
+
+
+#################################
+# Generate the name of the device based on the vendor
+#
+# For the case where there are equal or more ethernet devices than
+# accelerator devices
+# Globals:
+#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#     relevant to intent based naming
+#   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
+#     naming
+#   ethernet_devices: Array of ethernet devices
+#   accelerator_devices: Array of processor devices
+# Environment Variables:
+#   DEVPATH: Path of the device to name that includes PCI bus id
+# Arguments:
+#   $1: Vendor of the ethernet device
+#   $2: Index of the ethernet device in global list
+#   $3: Index of the accelerator device in global list
+# Outputs:
+#   Name of the device
+#################################
+function name_ethernet_greater_equal_gpu() {
+  local eth_device_vendor=$1
+  local -i index=$2
+  local -i gpu_index=$3
+  local gpu_device_vendor="$(get_value_by_index ${gpu_index} "${accelerator_devices[@]}")"
+  local -i rdma_index=$((index % ${ethernet_to_accelerator_ratio}))
+  # Search for relevant vendors in arrays and generate name based on results
+  # Minimum requirement is the vendor of the ethernet device in relevant list
+  # Add additional cases here for new hardware vendors or name cases
+  if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
+  [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
+    name_builder="rdma$((${rdma_index}))"
+  else
+    error_and_exit "Device is not for intent based name: "\
+    "Device vendors: eth:${eth_device_vendor} gpu:${gpu_device_vendor}"
+  fi
+
+  if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ \
+  [[:space:]]${gpu_device_vendor}[[:space:]] ]]; then
+      name_builder="gpu${gpu_index}${name_builder}"
+  fi
+
+  echo ${name_builder}
+}
+
+#################################
+# Generate the name of the device based on the vendor
+#
+# For the case where there are more accelerator devices than ethernet devices
+# Globals:
+#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#     relevant to intent based naming
+#   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
+#     naming
+#   ethernet_devices: Array of ethernet devices
+#   accelerator_devices: Array of processor devices
+# Environment Variables:
+#   DEVPATH: Path of the device to name that includes PCI bus id
+# Arguments:
+#   $1: Vendor of the ethernet device
+#   $2: Index of the ethernet device in global list
+#   $3: Index of the accelerator device in global list
+# Outputs:
+#   Name of the device
+#################################
+function name_gpu_greater_ethernet() {
+  local eth_device_vendor=$1
+  local -i index=$2
+  local -i gpu_index=$3
+  local -i rdma_index=0
+  local gpu_device_vendor="$(get_value_by_index ${gpu_index} "${accelerator_devices[@]}")"
+
+  # Search for relevant vendors in arrays and generate name based on results
+  # Minimum requirement is the vendor of the ethernet device in relevant list
+  # Add additional cases here for new hardware vendors or name cases
+  if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
+  [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
+    name_builder="rdma$((${rdma_index}))"
+  fi
+  if [[ $name_builder == "" ]]; then
+    error_and_exit "Device is not for intent based name: "\
+    "Device vendors: eth:${eth_device_vendor} gpu:${gpu_device_vendor}"
+  fi
+  local gpu_numbers="${gpu_index}_$((gpu_index + 1))"
+  if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ \
+  [[:space:]]${gpu_device_vendor}[[:space:]] ]]; then
+      name_builder="gpu${gpu_numbers}${name_builder}"
+  fi
+
+  echo ${name_builder}
+}
+
+###############################
+# Generate the name of the device based on the vendor
+# Globals:
+#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#     relevant to intent based naming
+#   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
+#     naming
+#   ethernet_devices: Array of ethernet devices
+#   accelerator_devices: Array of processor devices
+# Arguments:
+#   $1: Path of the device to name that includes PCI bus id
+# Outputs:
+#   Name of the device
+###############################
+function generate_name() {
+  local device_path=$1
+  local -i int_id=$(get_id_from_path "${device_path}")
+  debug "Path discovered int_id: ${int_id}"
+  # Pass the array of keys to find index of this device
+  local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
+  debug "ethernet device index: ${eth_index}"
+  if [[ ${eth_index} -eq -1 ]]; then
+    error_and_exit "Device not found in ethernet devices"
+  fi
+
+  local eth_device_vendor="${ethernet_devices[${int_id}]}"
+
+  local name_builder=""
+
+  if [[ ${accelerator_devices[*]} == "" ]] ; then
+    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
+    [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
+      name_builder="rdma${eth_index}"
+    else
+      error_and_exit "Device is not for intent based name: "\
+      "Device vendors: eth:${eth_device_vendor}"
+    fi
+  elif [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    local -i gpu_index=$(get_accelerator_index ${int_id})
+    name_builder=$(name_ethernet_greater_equal_gpu "${eth_device_vendor}" ${eth_index} ${gpu_index})
+  elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    local -i gpu_index=$(get_accelerator_index ${int_id})
+    name_builder=$(name_gpu_greater_ethernet "${eth_device_vendor}" ${eth_index} ${gpu_index})
+  else
+    error_and_exit "No index ratios found"
+  fi
+
+  notice "Device name: ${name_builder}"
+  echo ${name_builder}
+}
+
+# Give the ability to test the script without running the main logic
+if [[ ! $TEST == 'test' ]]; then
+  # Note can not use "" around ls path here or it errors out
+  list_devices ethernet_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
+
+    # Check if any devices were found
+  if [[ "${ethernet_devices[*]}" == "" ]]; then
+    error_and_exit "No network devices found"
+  fi
+
+  if [[ "${accelerator_devices[*]}" != "" ]]; then
+      determine_index_ratios
+  fi
+
+  generate_name "${DEVPATH}"
+fi
