@@ -17,7 +17,6 @@
 # processor 0. For this virtionet configuration, distributing IRQs to all
 # processors results in comparatively high cpu utilization and comparatively
 
-
 # low network bandwidth.
 #
 # For a multi-queue / MSI-X virtionet device, sets the IRQ affinities to the
