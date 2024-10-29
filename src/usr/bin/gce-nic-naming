@@ -81,11 +81,11 @@ function info() {
 }
 
 ###############################
-# Log info message to journal
+# Log notice message to journal
 # Globals
 #   LOG_TAG: Tag to use for logging
 # Arguments:
-#   $@: Info message
+#   $@: notice message
 ###############################
 function notice() {
   logger -t "${LOG_TAG}" -p local0.notice "$@"
