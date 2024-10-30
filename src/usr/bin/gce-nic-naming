@@ -1,4 +1,16 @@
 #!/bin/bash
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the more detailed information.
 #
 # This script is used to generate the network device name for a given device.
 
@@ -8,10 +20,11 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 # Path to the PCI bus devices
 declare PCI_BUS_PATH='/sys/bus/pci/devices'
 declare SYS_PREPEND_PATH='/sys'
-# 0x15b3 is the vendor ID for Mellanox
-readonly ETHERNET_DEVICES_VENDORS=('15b3' '8086')
+# 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
+# 0x8086:0x145c is the vendor and device ID for Intel IDPF
+readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c')
 # 0x10de is the vendor ID for Nvidia
-readonly GPU_DEVICES_VENDORS=('10de')
+readonly GPU_DEVICES_VENDORS=('10de' '10de')
 # PCI BUS ID path is in the format of 0000:00:04.0
 readonly PCI_ID_REGEX='[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+'
 
@@ -140,9 +153,12 @@ function list_devices() {
     # Example: 0000:00:04.0
     local -i int_id=$(get_id_from_path "${pci_device}")
     local vendor=$(cat "${pci_device}/vendor")
+    local device=$(cat "${pci_device}/device")
     vendor="${vendor#0x}"
-    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${vendor}[[:space:]] ]]; then
-      ethernet_map[${int_id}]=${vendor}
+    device="${device#0x}"
+    device_id="${vendor}:${device}"
+    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
+      ethernet_map[${int_id}]=${device_id}
     fi
 
     if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${vendor}[[:space:]] ]]; then
