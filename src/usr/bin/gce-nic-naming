@@ -42,22 +42,16 @@ declare -i accelerator_to_ethernet_ratio=1
 logger -t "gce-nic-naming" -p local0.info "Run ${LOG_TAG}"
 
 ###############################
-# Log error and exit with -1
+# Log error and exit with 1
 # Environment:
-#   ID_NET_NAME_PATH: net_id name based off of PCI path in form enp##s#
 # Arguments:
 #   $1: Error message
 ###############################
 function error_and_exit() {
   # Default to the network name if it exists.
-  # If script is run and returns empty or invalid name, UDev defaults to normal
-  # name the system would create as if this rule does not exist.
-  echo "$ID_NET_NAME_PATH"
   err "$@"
-  logger -t "${LOG_TAG}" -p local0.notice \
-    "Defaulting to name: ${ID_NET_NAME_PATH}"
-  # Script must exit with 0 or rule will be ignored.
-  exit 0
+  # Exit with non-zero code so that udev ignores this rule.
+  exit 1
 }
 
 ###############################
