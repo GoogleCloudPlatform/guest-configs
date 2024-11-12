@@ -124,6 +124,24 @@ function is_gvnic() {
   return 0
 }
 
+# Returns the vCPU ranges on each of the numa nodes based on the platform.
+# The vCPU ranges will be in the form of array of
+# [numa0_irq_start_1, numa0_irq_end_1, numa0_irq_start_2, numa0_irq_end_2,
+# numa1_irq_start_1, numa1_irq_end_1, numa1_irq_start_2, numa1_irq_end_2]
+function get_vcpu_ranges {
+  declare -n arr_ref=$1
+  machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
+    http://169.254.169.254/computeMetadata/v1/instance/machine-type)
+
+  if [[ "$machine_type" == *"a3-highgpu-8g"* \
+  || "$machine_type" == *"a3-megagpu-8g"* \
+  || "$machine_type" == *"a3-edgegpu-8g"* ]]; then
+    arr_ref=(1, 51, 104, 155, 52, 103, 156, 207)
+  elif [[ "$machine_type" == *"a3-ultragpu-"* ]]; then
+    arr_ref=(1, 55, 113, 168, 56, 112, 169, 224)
+  fi
+}
+
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
 
@@ -269,7 +287,12 @@ fi
 # enp140s0
 
 # IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
-numa0_irq_start=1
+irq_ranges=()
+get_vcpu_ranges irq_ranges
+echo "Binding vCPUs on NUMA0 [${irq_ranges[0]} ${irq_ranges[1]}], [${irq_ranges[2]} ${irq_ranges[3]}]}"
+echo "Binding vCPUs on NUMA1 [${irq_ranges[4]} ${irq_ranges[5]}], [${irq_ranges[6]} ${irq_ranges[7]}]}"
+
+numa0_irq_start=${irq_ranges[0]}
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
@@ -288,8 +311,8 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
   bind_cores_begin=$numa0_irq_start
   bind_cores_end=$((bind_cores_begin + nic_num_queues))
 
-  if [[ $bind_cores_begin -lt 51 ]] && [[ $bind_cores_end -gt 51 ]]; then
-    bind_cores_begin=104
+  if [[ $bind_cores_begin -lt ${irq_ranges[1]} ]] && [[ $bind_cores_end -gt ${irq_ranges[1]} ]]; then
+    bind_cores_begin=${irq_ranges[2]}
     bind_cores_end=$((bind_cores_begin + nic_num_queues))
   fi
 
@@ -299,7 +322,7 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
 done
 
 # IRQ binding for numa 1, CPUs [52, 103] and [156, 207] are for numa 1.
-numa1_irq_start=52
+numa1_irq_start=${irq_ranges[4]}
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
@@ -318,8 +341,8 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
   bind_cores_begin=$numa1_irq_start
   bind_cores_end=$((bind_cores_begin + nic_num_queues))
 
-  if [[ $bind_cores_begin -lt 103 ]] && [[ $bind_cores_end -gt 103 ]]; then
-    bind_cores_begin=156
+  if [[ $bind_cores_begin -lt ${irq_ranges[5]} ]] && [[ $bind_cores_end -gt ${irq_ranges[5]} ]]; then
+    bind_cores_begin=${irq_ranges[6]}
     bind_cores_end=$((bind_cores_begin + nic_num_queues))
   fi
 
