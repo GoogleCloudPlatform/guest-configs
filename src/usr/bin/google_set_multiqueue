@@ -133,6 +133,9 @@ function get_vcpu_ranges {
   machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
     http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
+  # Avoid binding on vCPU 0 since it is a heavily used CPU
+  # by the system.
+
   if [[ "$machine_type" == *"a3-highgpu-8g"* \
   || "$machine_type" == *"a3-megagpu-8g"* \
   || "$machine_type" == *"a3-edgegpu-8g"* ]]; then
