@@ -155,7 +155,7 @@ function get_vcpu_ranges {
   "$numa0_irq_range0_start"
   "$numa0_irq_range0_end"
   "$numa0_irq_range1_start"
-  "$numa0_irq_range1_start"
+  "$numa0_irq_range1_end"
   "$numa1_irq_range0_start"
   "$numa1_irq_range0_end"
   "$numa1_irq_range1_start"
