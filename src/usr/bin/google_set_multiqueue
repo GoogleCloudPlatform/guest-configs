@@ -124,25 +124,42 @@ function is_gvnic() {
   return 0
 }
 
-# Returns the vCPU ranges on each of the numa nodes based on the platform.
-# The vCPU ranges will be in the form of array of
+# Returns the vCPU ranges on each of the numa nodes. The vCPU ranges will
+# be in the form of array of
 # [numa0_irq_start_1, numa0_irq_end_1, numa0_irq_start_2, numa0_irq_end_2,
 # numa1_irq_start_1, numa1_irq_end_1, numa1_irq_start_2, numa1_irq_end_2]
 function get_vcpu_ranges {
   declare -n arr_ref=$1
-  machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
-    http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
-  # Avoid binding on vCPU 0 since it is a heavily used CPU
-  # by the system.
+  # Get vCPU ranges for NUMA 0
+  numa0_irq_range=($(cat /sys/devices/system/node/node0/cpulist))
+  numa0_irq_range0="${numa0_irq_range[0]%,*}"
+  numa0_irq_range1="${numa0_irq_range[0]#*,}"
 
-  if [[ "$machine_type" == *"a3-highgpu-8g"* \
-  || "$machine_type" == *"a3-megagpu-8g"* \
-  || "$machine_type" == *"a3-edgegpu-8g"* ]]; then
-    arr_ref=(1, 51, 104, 155, 52, 103, 156, 207)
-  elif [[ "$machine_type" == *"a3-ultragpu-"* ]]; then
-    arr_ref=(1, 55, 113, 168, 56, 112, 169, 224)
-  fi
+  numa0_irq_range0_start=$(echo "$numa0_irq_range0" | cut -d '-' -f 1)
+  numa0_irq_range0_end=$(echo "$numa0_irq_range0" | cut -d '-' -f 2)
+  numa0_irq_range1_start=$(echo "$numa0_irq_range1" | cut -d '-' -f 1)
+  numa0_irq_range1_end=$(echo "$numa0_irq_range1" | cut -d '-' -f 2)
+
+  # Get vCPU ranges for NUMA 1
+  numa1_irq_range=($(cat /sys/devices/system/node/node1/cpulist))
+  numa1_irq_range0="${numa1_irq_range[0]%,*}"
+  numa1_irq_range1="${numa1_irq_range[0]#*,}"
+
+  numa1_irq_range0_start=$(echo "$numa1_irq_range0" | cut -d '-' -f 1)
+  numa1_irq_range0_end=$(echo "$numa1_irq_range0" | cut -d '-' -f 2)
+  numa1_irq_range1_start=$(echo "$numa1_irq_range1" | cut -d '-' -f 1)
+  numa1_irq_range1_end=$(echo "$numa1_irq_range1" | cut -d '-' -f 2)
+
+  arr_ref=(
+  "$numa0_irq_range0_start"
+  "$numa0_irq_range0_end"
+  "$numa0_irq_range1_start"
+  "$numa0_irq_range1_start"
+  "$numa1_irq_range0_start"
+  "$numa1_irq_range0_end"
+  "$numa1_irq_range1_start"
+  "$numa1_irq_range1_end")
 }
 
 echo "Running $(basename $0)."
