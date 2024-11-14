@@ -16,6 +16,3 @@ IMPORT{builtin}="net_id"
 
 # Rule to rename Mellanox devices
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
-
-# Rule to rename RDMA devices
-SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
