@@ -137,6 +137,10 @@ function get_vcpu_ranges {
   numa0_irq_range1="${numa0_irq_range[0]#*,}"
 
   numa0_irq_range0_start=$(echo "$numa0_irq_range0" | cut -d '-' -f 1)
+  # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
+  # used by the system.
+  numa0_irq_range0_start=$((numa0_irq_range0_start + 1))
+  
   numa0_irq_range0_end=$(echo "$numa0_irq_range0" | cut -d '-' -f 2)
   numa0_irq_range1_start=$(echo "$numa0_irq_range1" | cut -d '-' -f 1)
   numa0_irq_range1_end=$(echo "$numa0_irq_range1" | cut -d '-' -f 2)
