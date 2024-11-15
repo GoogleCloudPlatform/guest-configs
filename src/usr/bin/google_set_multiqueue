@@ -130,6 +130,13 @@ function is_gvnic() {
 # numa1_irq_start_1, numa1_irq_end_1, numa1_irq_start_2, numa1_irq_end_2]
 # this will only return the vCPU ranges on NUMA0 and NUMA1 since accelerator
 # platforms of GEN3 and after only have 2 NUMA nodes.
+# The expected vCPU ranges on eahc platforms are:
+# A3/A3-mega: 
+# numa0: [0, 51] [104, 155]
+# numa1: [52, 103] [156, 207]
+# A3-ultra:
+# numa0: [0, 55] [113, 168]
+# numa1: [56, 112] [169, 224]
 function get_vcpu_ranges_on_accelerator_platform {
   declare -n arr_ref=$1
 
@@ -312,7 +319,6 @@ fi
 # enp134s0
 # enp140s0
 
-# IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
 irq_ranges=()
 get_vcpu_ranges_on_accelerator_platform irq_ranges
 echo "Binding vCPUs on NUMA0 [${irq_ranges[0]} ${irq_ranges[1]}], [${irq_ranges[2]} ${irq_ranges[3]}]}"
@@ -347,7 +353,6 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
   numa0_irq_start=$bind_cores_end
 done
 
-# IRQ binding for numa 1, CPUs [52, 103] and [156, 207] are for numa 1.
 numa1_irq_start=${irq_ranges[4]}
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
