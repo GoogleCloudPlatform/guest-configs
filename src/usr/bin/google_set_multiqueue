@@ -128,7 +128,9 @@ function is_gvnic() {
 # be in the form of array of
 # [numa0_irq_start_1, numa0_irq_end_1, numa0_irq_start_2, numa0_irq_end_2,
 # numa1_irq_start_1, numa1_irq_end_1, numa1_irq_start_2, numa1_irq_end_2]
-function get_vcpu_ranges {
+# this will only return the vCPU ranges on NUMA0 and NUMA1 since accelerator
+# platforms of GEN3 and after only have 2 NUMA nodes.
+function get_vcpu_ranges_on_accelerator_platform {
   declare -n arr_ref=$1
 
   # Get vCPU ranges for NUMA 0
@@ -312,7 +314,7 @@ fi
 
 # IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
 irq_ranges=()
-get_vcpu_ranges irq_ranges
+get_vcpu_ranges_on_accelerator_platform irq_ranges
 echo "Binding vCPUs on NUMA0 [${irq_ranges[0]} ${irq_ranges[1]}], [${irq_ranges[2]} ${irq_ranges[3]}]}"
 echo "Binding vCPUs on NUMA1 [${irq_ranges[4]} ${irq_ranges[5]}], [${irq_ranges[6]} ${irq_ranges[7]}]}"
 
