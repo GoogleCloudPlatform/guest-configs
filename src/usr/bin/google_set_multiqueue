@@ -16,7 +16,6 @@
 # For a single-queue / no MSI-X virtionet device, sets the IRQ affinities to
 # processor 0. For this virtionet configuration, distributing IRQs to all
 # processors results in comparatively high cpu utilization and comparatively
-
 # low network bandwidth.
 #
 # For a multi-queue / MSI-X virtionet device, sets the IRQ affinities to the
@@ -107,19 +106,7 @@ function is_a3_platform() {
   [[ "$machine_type" == *"a3-highgpu-8g"* \
   || "$machine_type" == *"a3-ultragpu-8g"* \
   || "$machine_type" == *"a3-megagpu-8g"* \
-  || "$machine_type" == *"a3-edgegpu-8g"* \
-  || "$machine_type" == *"a3-ultragpu-"* ]] || return 1
-  return 0
-}
-
-
-# returns 0 (success) if the supplied nic is a Gvnic device.
-function is_gvnic() {
-  local -r nic_name="$1"
-  driver_type=$(ethtool -i $nic_name | grep driver)
-
-  [[ "$driver_type" == *"gve"* 
-  || "$driver_type" == *"gvnic"* ]] || return 1
+  || "$machine_type" == *"a3-edgegpu-8g"* ]] || return 1
 
   return 0
 }
@@ -138,10 +125,7 @@ if [ -x "$(command -v ethtool)" ]; then
         continue
       fi
       num_max_channels=$(ethtool -l "$eth_dev" | grep -m 1 Combined | cut -f2)
-      if [[ -n "${num_max_channels}" || "${num_max_channels}" -eq "1" ]]; then
-        echo "num_max_channels is n/a, skipping set channels for $eth_dev"
-        continue
-      fi
+      [ "${num_max_channels}" -eq "1" ] && continue
       if is_decimal_int "$num_max_channels" && \
         set_channels "$eth_dev" "$num_max_channels"; then
         echo "Set channels for $eth_dev to $num_max_channels."
@@ -271,14 +255,6 @@ fi
 # IRQ binding for numa 0, CPUs [0, 51] and [104, 155] are for numa 0.
 numa0_irq_start=1
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
-    continue
-  fi
-
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ."
-
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 0 ]]; then
     continue
@@ -301,14 +277,6 @@ done
 # IRQ binding for numa 1, CPUs [52, 103] and [156, 207] are for numa 1.
 numa1_irq_start=52
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
-    continue
-  fi
-
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ."
-
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 1 ]]; then
     continue
@@ -327,4 +295,3 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
 
   numa1_irq_start=$bind_cores_end
 done
-  
