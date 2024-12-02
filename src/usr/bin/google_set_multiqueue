@@ -265,7 +265,7 @@ num_cpus=$(nproc)
 num_queues=0
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if ! is_gvnic "$interface"; then
+  if is_a3_platform && ! is_gvnic "$interface"; then
     continue
   fi
   num_queues=$((num_queues + 1))
@@ -275,7 +275,7 @@ done
 # as CPUNumber % queue_count.
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if ! is_gvnic "$interface"; then
+  if is_a3_platform && ! is_gvnic "$interface"; then
     continue
   fi
 
