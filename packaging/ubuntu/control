@@ -16,6 +16,7 @@ Depends: ${misc:Depends},
          google-guest-agent,
          nvme-cli,
          jq,
+         networkd-dispatcher,
          ${misc:Depends}
 Provides: irqbalance
 Recommends: rsyslog | system-log-daemon
