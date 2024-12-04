@@ -177,7 +177,7 @@ function get_vcpu_ranges_on_accelerator_platform {
 
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
-IS_A3_PLATFORM = is_a3_platform
+IS_A3_PLATFORM=$(is_a3_platform)
 
 # Loop through all the virtionet devices and enable multi-queue
 if [ -x "$(command -v ethtool)" ]; then
