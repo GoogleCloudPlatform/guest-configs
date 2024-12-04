@@ -177,7 +177,8 @@ function get_vcpu_ranges_on_accelerator_platform {
 
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
-IS_A3_PLATFORM=$(is_a3_platform)
+is_a3_platform
+IS_A3_PLATFORM=$?
 
 # Loop through all the virtionet devices and enable multi-queue
 if [ -x "$(command -v ethtool)" ]; then
@@ -266,7 +267,7 @@ num_cpus=$(nproc)
 num_queues=0
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if $IS_A3_PLATFORM && ! is_gvnic "$interface"; then
+  if [[ $IS_A3_PLATFORM ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
   num_queues=$((num_queues + 1))
@@ -276,7 +277,7 @@ done
 # as CPUNumber % queue_count.
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if $IS_A3_PLATFORM && ! is_gvnic "$interface"; then
+  if [[ $IS_A3_PLATFORM ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
 
@@ -306,7 +307,7 @@ for q in $XPS; do
   printf "Queue %d XPS=%s for %s\n" $queue_num `cat $q` $q
 done | sort -n -k2
 
-if ! $IS_A3_PLATFORM; then
+if [[ ! $IS_A3_PLATFORM ]]; then
   exit
 fi
 
