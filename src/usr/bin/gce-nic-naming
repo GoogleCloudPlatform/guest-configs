@@ -21,7 +21,7 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 declare PCI_BUS_PATH='/sys/bus/pci/devices'
 declare SYS_PREPEND_PATH='/sys'
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
-# 0x8086:0x145c is the vendor and device ID for Intel IDPF
+# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c')
 # 0x10de is the vendor ID for Nvidia
 readonly GPU_DEVICES_VENDORS=('10de' '10de')
