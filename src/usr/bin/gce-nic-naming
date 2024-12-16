@@ -14,6 +14,10 @@
 #
 # This script is used to generate the network device name for a given device.
 
+
+# Input to test if a directory in the PCI tree exists under the device
+declare PCI_TEST_ITEM="$1"
+
 # Generate a instance specific tag for logging to journal
 readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 
@@ -457,7 +461,14 @@ function generate_name() {
   if [[ ${accelerator_devices[*]} == "" ]] ; then
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
     [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
-      name_builder="rdma${eth_index}"
+      
+      if [[ "${SUBSYSTEM}" == "net" ]] && [[ ! -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${PCI_TEST_ITEM}" ]]; then
+        # If this is a VF device and not an RDMA the race condition is addressed by naming to position based name.
+        notice "Non RDMA NIC. Setting name to path name"
+	name_builder=$ID_NET_NAME_PATH
+      else
+        name_builder="rdma${eth_index}"
+      fi
     else
       error_and_exit "Device is not for intent based name: "\
       "Device vendors: eth:${eth_device_vendor}"
@@ -478,8 +489,13 @@ function generate_name() {
   echo ${name_builder}
 }
 
+
 # Give the ability to test the script without running the main logic
-if [[ ! $TEST == 'test' ]]; then
+if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
+
+  if [[ "$SUBSYSTEM" != "net" ]]; then
+    notice "Triggered for non Net Device"
+  fi
   # Note can not use "" around ls path here or it errors out
   list_devices ethernet_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
 
@@ -492,5 +508,20 @@ if [[ ! $TEST == 'test' ]]; then
       determine_index_ratios
   fi
 
-  generate_name "${DEVPATH}"
+  generated_name=$(generate_name "${DEVPATH}")
+  
+  # handle the 2nd load order 
+  if [[ "$SUBSYSTEM" == "net" ]]; then
+    echo ${generated_name}
+  else
+    dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
+    # Check that device has loaded as a net dev before applying the name. 
+    if [[ -d "$dev_path/net/" ]]; then
+      current_net_iface="$(ls $dev_path/net/)"
+      notice "Renaming iface ${current_net_iface} to ${generated_name}"
+      /usr/sbin/ip link set dev ${current_net_iface} down
+      /usr/sbin/ip link set dev ${current_net_iface} name ${generated_name}
+      /usr/sbin/ip link set dev ${generated_name} up
+    fi
+  fi
 fi
