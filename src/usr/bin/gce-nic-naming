@@ -16,7 +16,7 @@
 
 
 # Input to test if a directory in the PCI tree exists under the device
-declare PCI_TEST_ITEM="$1"
+declare DEVICE_DRIVER="$1"
 
 # Generate a instance specific tag for logging to journal
 readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
@@ -462,10 +462,12 @@ function generate_name() {
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
     [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
       
-      if [[ "${SUBSYSTEM}" == "net" ]] && [[ ! -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${PCI_TEST_ITEM}" ]]; then
-        # If this is a VF device and not an RDMA the race condition is addressed by naming to position based name.
-        notice "Non RDMA NIC. Setting name to path name"
-	name_builder=$ID_NET_NAME_PATH
+      if [[ "${SUBSYSTEM}" == "net" ]] && [[ ! -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
+        # If this is a VF device and not an RDMA we do not want this device 
+        # to claim the eth0 name so give it a PCI path based name instead.
+        # 
+        notice "Non RDMA VF NIC. Setting name to path name"
+	      name_builder=$ID_NET_NAME_PATH
       else
         name_builder="rdma${eth_index}"
       fi
@@ -489,6 +491,11 @@ function generate_name() {
   echo ${name_builder}
 }
 
+# Intel VF driver and needs special handling to determine if name should be 
+# RDMA related
+if [[ "${DEVICE_DRIVER}" == "idpf" ]]; then
+  RDMA_TEST_FOLDER="infiniband"
+fi
 
 # Give the ability to test the script without running the main logic
 if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
@@ -510,10 +517,10 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
 
   generated_name=$(generate_name "${DEVPATH}")
   
-  # handle the 2nd load order 
   if [[ "$SUBSYSTEM" == "net" ]]; then
     echo ${generated_name}
   else
+    # Handle load order where netdev plug happens prior to RDMA plug events
     dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
     # Check that device has loaded as a net dev before applying the name. 
     if [[ -d "$dev_path/net/" ]]; then
