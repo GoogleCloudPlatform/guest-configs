@@ -1,0 +1,22 @@
+# Copyright 2024 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the more detailed information.
+
+# Must import here to make ID_NET_NAME_PATH available to program
+IMPORT{builtin}="net_id"
+
+# Rule to rename Mellanox devices
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
+
+# Rule to rename RDMA devices
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming %E{ID_NET_DRIVER}", NAME="%c"
+SUBSYSTEM=="auxiliary", ACTION=="add", DRIVERS=="*irdma*", PROGRAM="/usr/bin/gce-nic-naming"
