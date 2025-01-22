@@ -53,7 +53,10 @@ if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
   fi
 
   # Add an entry for reaching the metadata server in /etc/hosts.
-  echo "169.254.169.254 metadata.google.internal  # Added by Google" >> /etc/hosts
+  has_metadata_entry=$(egrep '^169\.254\.169\.254' /etc/hosts)
+  if [ -z "$has_metadata_entry" ]; then
+      echo "169.254.169.254 metadata.google.internal  # Added by Google" >> /etc/hosts
+  fi
 fi
 
 # /sbin/dhclient-scripts in both ubuntu and centos have some problems for us:
