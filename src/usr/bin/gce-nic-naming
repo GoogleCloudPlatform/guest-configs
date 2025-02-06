@@ -14,6 +14,10 @@
 #
 # This script is used to generate the network device name for a given device.
 
+
+# Input to test if a directory in the PCI tree exists under the device
+declare DEVICE_DRIVER="$1"
+
 # Generate a instance specific tag for logging to journal
 readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 
@@ -21,7 +25,7 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 declare PCI_BUS_PATH='/sys/bus/pci/devices'
 declare SYS_PREPEND_PATH='/sys'
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
-# 0x8086:0x145c is the vendor and device ID for Intel IDPF
+# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c')
 # 0x10de is the vendor ID for Nvidia
 readonly GPU_DEVICES_VENDORS=('10de' '10de')
@@ -457,7 +461,16 @@ function generate_name() {
   if [[ ${accelerator_devices[*]} == "" ]] ; then
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
     [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
-      name_builder="rdma${eth_index}"
+      
+      if [[ "${SUBSYSTEM}" == "net" ]] && [[ ! -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
+        # If this is a VF device and not an RDMA we do not want this device 
+        # to claim the eth0 name so give it a PCI path based name instead.
+        # 
+        notice "Non RDMA VF NIC. Setting name to path name"
+	      name_builder=$ID_NET_NAME_PATH
+      else
+        name_builder="rdma${eth_index}"
+      fi
     else
       error_and_exit "Device is not for intent based name: "\
       "Device vendors: eth:${eth_device_vendor}"
@@ -478,8 +491,18 @@ function generate_name() {
   echo ${name_builder}
 }
 
+# Intel VF driver and needs special handling to determine if name should be 
+# RDMA related
+if [[ "${DEVICE_DRIVER}" == "idpf" ]]; then
+  RDMA_TEST_FOLDER="infiniband"
+fi
+
 # Give the ability to test the script without running the main logic
-if [[ ! $TEST == 'test' ]]; then
+if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
+
+  if [[ "$SUBSYSTEM" != "net" ]]; then
+    notice "Triggered for non Net Device"
+  fi
   # Note can not use "" around ls path here or it errors out
   list_devices ethernet_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
 
@@ -492,5 +515,20 @@ if [[ ! $TEST == 'test' ]]; then
       determine_index_ratios
   fi
 
-  generate_name "${DEVPATH}"
+  generated_name=$(generate_name "${DEVPATH}")
+  
+  if [[ "$SUBSYSTEM" == "net" ]]; then
+    echo ${generated_name}
+  else
+    # Handle load order where netdev plug happens prior to RDMA plug events
+    dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
+    # Check that device has loaded as a net dev before applying the name. 
+    if [[ -d "$dev_path/net/" ]]; then
+      current_net_iface="$(ls $dev_path/net/)"
+      notice "Renaming iface ${current_net_iface} to ${generated_name}"
+      /usr/sbin/ip link set dev ${current_net_iface} down
+      /usr/sbin/ip link set dev ${current_net_iface} name ${generated_name}
+      /usr/sbin/ip link set dev ${generated_name} up
+    fi
+  fi
 fi
