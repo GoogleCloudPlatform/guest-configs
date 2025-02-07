@@ -99,8 +99,8 @@ function set_irq_range() {
   done
 }
 
-# returns 0 (success) if it's running on a3 or a3plus platform.
-function is_a3_platform() {
+# returns 0 (success) if the platform is a multinic accelerator platform.
+function is_multinic_accelerator_platform() {
   machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
     http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
@@ -108,7 +108,8 @@ function is_a3_platform() {
   || "$machine_type" == *"a3-ultragpu-8g"* \
   || "$machine_type" == *"a3-megagpu-8g"* \
   || "$machine_type" == *"a3-edgegpu-8g"* \
-  || "$machine_type" == *"a3-ultragpu-"* ]] || return 1
+  || "$machine_type" == *"a3-ultragpu-"* \
+  || "$machine_type" == *"a4-highgpu-"* ]] || return 1
   return 0
 }
 
@@ -177,8 +178,8 @@ function get_vcpu_ranges_on_accelerator_platform {
 
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
-is_a3_platform
-IS_A3_PLATFORM=$?
+is_multinic_accelerator_platform
+IS_MULTINIC_ACCELERATOR_PLATFORM=$?
 
 # Loop through all the virtionet devices and enable multi-queue
 if [ -x "$(command -v ethtool)" ]; then
@@ -267,7 +268,7 @@ num_cpus=$(nproc)
 num_queues=0
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if [[ $IS_A3_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
+  if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
   num_queues=$((num_queues + 1))
@@ -277,7 +278,7 @@ done
 # as CPUNumber % queue_count.
 for q in $XPS; do
   interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
-  if [[ $IS_A3_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
+  if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
 
@@ -307,7 +308,7 @@ for q in $XPS; do
   printf "Queue %d XPS=%s for %s\n" $queue_num `cat $q` $q
 done | sort -n -k2
 
-if [[ ! $IS_A3_PLATFORM == 0 ]]; then
+if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
   exit
 fi
 
