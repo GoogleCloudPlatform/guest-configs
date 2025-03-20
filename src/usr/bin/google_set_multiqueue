@@ -99,12 +99,33 @@ function set_irq_range() {
   done
 }
 
+# returns 0 (success) if the all the interfaces contains pnic_id on the Metadats server.
+function contains_pnic_ids() {
+  while IFS= read -r interface; do
+    echo "Interface: $interface"
+
+    network_interfaces_mds_attributes=$(curl -m 1 -H "Metadata-Flavor: Google" \
+      "http://169.254.169.254/computeMetadata/v1/instance/network-interfaces/$interface/")
+
+    if ! echo "$network_interfaces_mds_attributes" | grep -q "physical-nic-id"; then
+      echo "physical-nic-id NOT found in interface $interface"
+      return 1
+    fi
+  done < <(curl -m 1 -H "Metadata-Flavor: Google" http://169.254.169.254/computeMetadata/v1/instance/network-interfaces/)
+
+  return 0
+}
+
 # returns 0 (success) if the platform is a multinic accelerator platform.
 function is_multinic_accelerator_platform() {
+  contains_pnic_ids
+  CONTAINS_PNIC_IDS=$?
+
   machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
     http://169.254.169.254/computeMetadata/v1/instance/machine-type)
 
-  [[ "$machine_type" == *"a3-highgpu-8g"* \
+  [[ $CONTAINS_PNIC_IDS -eq 0 \
+  || "$machine_type" == *"a3-highgpu-8g"* \
   || "$machine_type" == *"a3-ultragpu-8g"* \
   || "$machine_type" == *"a3-megagpu-8g"* \
   || "$machine_type" == *"a3-edgegpu-8g"* \
