@@ -461,15 +461,19 @@ function generate_name() {
   if [[ ${accelerator_devices[*]} == "" ]] ; then
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
     [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
-      
-      if [[ "${SUBSYSTEM}" == "net" ]] && [[ ! -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
-        # If this is a VF device and not an RDMA we do not want this device 
+      if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
+
+        name_builder="rdma${eth_index}"
+      elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device" ]]; then
+        # If this is a VF device and not an RDMA we do not want this device
         # to claim the eth0 name so give it a PCI path based name instead.
-        # 
+        #
         notice "Non RDMA VF NIC. Setting name to path name"
 	      name_builder=$ID_NET_NAME_PATH
       else
-        name_builder="rdma${eth_index}"
+        # If device path is empty it indicates other changes happening so this script will skip
+        error_and_exit "DEVPATH provided is empty, skipping naming. Path:${SYS_PREPEND_PATH}${DEVPATH}"
+
       fi
     else
       error_and_exit "Device is not for intent based name: "\
@@ -491,7 +495,7 @@ function generate_name() {
   echo ${name_builder}
 }
 
-# Intel VF driver and needs special handling to determine if name should be 
+# Intel VF driver and needs special handling to determine if name should be
 # RDMA related
 if [[ "${DEVICE_DRIVER}" == "idpf" ]]; then
   RDMA_TEST_FOLDER="infiniband"
@@ -516,13 +520,13 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
   fi
 
   generated_name=$(generate_name "${DEVPATH}")
-  
+
   if [[ "$SUBSYSTEM" == "net" ]]; then
     echo ${generated_name}
   else
     # Handle load order where netdev plug happens prior to RDMA plug events
     dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
-    # Check that device has loaded as a net dev before applying the name. 
+    # Check that device has loaded as a net dev before applying the name.
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
       notice "Renaming iface ${current_net_iface} to ${generated_name}"
