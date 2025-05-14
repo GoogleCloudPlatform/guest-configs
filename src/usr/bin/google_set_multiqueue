@@ -46,7 +46,6 @@ function set_channels() {
 
 function set_irq_range() {
   local -r nic="$1"
-  # local bind_cores_index="$2"
   local bind_cores_index="$2"
   local irq_ranges=("${@:3}")
 
@@ -305,7 +304,6 @@ num_cpus=$(nproc)
 
 num_queues=0
 for q in $XPS; do
-  # interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
   interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
   if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
@@ -316,7 +314,6 @@ done
 # If we have more CPUs than queues, then stripe CPUs across tx affinity
 # as CPUNumber % queue_count.
 for q in $XPS; do
-  # interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
   interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
   if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
