@@ -46,7 +46,9 @@ function set_channels() {
 
 function set_irq_range() {
   local -r nic="$1"
-  local bind_cores_begin="$2"
+  # local bind_cores_index="$2"
+  local bind_cores_index="$2"
+  local irq_ranges=("${@:3}")
 
   # The user may not have this $nic configured on their VM, if not, just skip
   # it, no need to error out.
@@ -60,12 +62,10 @@ function set_irq_range() {
   # queues while the number of IRQs stands for the max queues. The number of
   # initial queues should be always less than or equal to that of the max
   # queues.
-  core=$bind_cores_begin
   num_irqs=$(( $(ls /sys/class/net/"$nic"/device/msi_irqs | wc -l) / 2 ))
   num_q=$(ls -1 /sys/class/net/"$nic"/queues/ | grep rx | wc -l)
-
-  echo "Setting irq binding for "$nic" to core [$core - $((core + num_q - 1))] ..."
-
+  echo "Setting irq binding for "$nic" to core ["${irq_ranges[${bind_cores_index}]}" - "${irq_ranges[$((bind_cores_index + num_q - 1))]}] ... >&2
+fset
   irqs=($(ls /sys/class/net/"$nic"/device/msi_irqs | sort -g))
   for ((irq = 0; irq < "$num_irqs"; irq++)); do
     tx_irq=${irqs[$irq]}
@@ -73,13 +73,14 @@ function set_irq_range() {
 
     # Only allocate $num_q cores to the IRQs and queues. If the number of IRQs
     # is more than that of queues, the CPUs will be wrapped around.
-    core=$(( bind_cores_begin + irq % num_q ))
+    core="${irq_ranges[${bind_cores_index}]}"
+    ((bind_cores_index++))
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list
+    echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list >&2
 
     # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list
+    echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list >&2
 
     # Check if the queue exists at present because the number of IRQs equals
     # the max number of queues allocated and could be greater than the current
@@ -90,13 +91,15 @@ function set_irq_range() {
       # select if its mask is found in one of the queue's xps_cpus
       cp /proc/irq/"$tx_irq"/smp_affinity $tx_queue/xps_cpus
 
-      echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
-      echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)"
+      echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
+      echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)" >&2
     else
-      echo -e "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core"
+      echo -e "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
     fi
 
   done
+
+  echo "$bind_cores_index"
 }
 
 # returns 0 (success) if the all the interfaces contains pnic_id on the Metadats server.
@@ -198,6 +201,19 @@ function get_vcpu_ranges_on_accelerator_platform {
   "$numa1_irq_range1_end")
 }
 
+function unpack_irq_ranges() {
+    local input_ranges=($1)
+    local -n irq_ranges="$2"
+    for ((i=0; i<${#input_ranges[@]}; i+=2)); do
+        local start="${input_ranges[$i]}"
+        local end="${input_ranges[$((i+1))]}"
+
+        for ((core_number=start; core_number<=end; core_number++)); do
+            irq_ranges+=("$core_number")
+        done
+    done
+}
+
 echo "Running $(basename $0)."
 VIRTIO_NET_DEVS=/sys/bus/virtio/drivers/virtio_net/virtio*
 is_multinic_accelerator_platform
@@ -289,7 +305,8 @@ num_cpus=$(nproc)
 
 num_queues=0
 for q in $XPS; do
-  interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
+  # interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
+  interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
   if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
@@ -299,7 +316,8 @@ done
 # If we have more CPUs than queues, then stripe CPUs across tx affinity
 # as CPUNumber % queue_count.
 for q in $XPS; do
-  interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
+  # interface=$(echo "$q" | grep -oP 'net/\K[^/]+')
+  interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
   if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
     continue
   fi
@@ -355,10 +373,22 @@ fi
 
 irq_ranges=()
 get_vcpu_ranges_on_accelerator_platform irq_ranges
-echo "Binding vCPUs on NUMA0 [${irq_ranges[0]} ${irq_ranges[1]}], [${irq_ranges[2]} ${irq_ranges[3]}]}"
-echo "Binding vCPUs on NUMA1 [${irq_ranges[4]} ${irq_ranges[5]}], [${irq_ranges[6]} ${irq_ranges[7]}]}"
 
-numa0_irq_start=${irq_ranges[0]}
+packed_numa0_irq_ranges=(
+  "${irq_ranges[0]} ${irq_ranges[1]} ${irq_ranges[2]} ${irq_ranges[3]}"
+)
+packed_numa1_irq_ranges=(
+  "${irq_ranges[4]} ${irq_ranges[5]} ${irq_ranges[6]} ${irq_ranges[7]}"
+)
+declare -a numa0_irq_ranges
+unpack_irq_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
+declare -a numa1_irq_ranges
+unpack_irq_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
+
+echo -e "Binding vCPUs on NUMA0 [${numa0_irq_ranges[@]}]\n"
+echo -e "Binding vCPUs on NUMA1 [${numa1_irq_ranges[@]}]\n"
+
+bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
@@ -373,21 +403,10 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
     continue
   fi
 
-  nic_num_queues=$(ls -1 /sys/class/net/"$nic_name"/queues/ | grep rx | wc -l)
-  bind_cores_begin=$numa0_irq_start
-  bind_cores_end=$((bind_cores_begin + nic_num_queues))
-
-  if [[ $bind_cores_begin -lt ${irq_ranges[1]} ]] && [[ $bind_cores_end -gt ${irq_ranges[1]} ]]; then
-    bind_cores_begin=${irq_ranges[2]}
-    bind_cores_end=$((bind_cores_begin + nic_num_queues))
-  fi
-
-  set_irq_range "$nic_name" "$bind_cores_begin"
-
-  numa0_irq_start=$bind_cores_end
+  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
 done
 
-numa1_irq_start=${irq_ranges[4]}
+bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
@@ -402,17 +421,6 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
     continue
   fi
 
-  nic_num_queues=$(ls -1 /sys/class/net/"$nic_name"/queues/ | grep rx | wc -l)
-  bind_cores_begin=$numa1_irq_start
-  bind_cores_end=$((bind_cores_begin + nic_num_queues))
-
-  if [[ $bind_cores_begin -lt ${irq_ranges[5]} ]] && [[ $bind_cores_end -gt ${irq_ranges[5]} ]]; then
-    bind_cores_begin=${irq_ranges[6]}
-    bind_cores_end=$((bind_cores_begin + nic_num_queues))
-  fi
-
-  set_irq_range "$nic_name" "$bind_cores_begin"
-
-  numa1_irq_start=$bind_cores_end
+  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_begin" "${numa1_irq_ranges[@]}")
 done
   
