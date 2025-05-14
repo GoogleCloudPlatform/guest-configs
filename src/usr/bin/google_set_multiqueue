@@ -64,7 +64,7 @@ function set_irq_range() {
   num_irqs=$(( $(ls /sys/class/net/"$nic"/device/msi_irqs | wc -l) / 2 ))
   num_q=$(ls -1 /sys/class/net/"$nic"/queues/ | grep rx | wc -l)
   echo "Setting irq binding for "$nic" to core ["${irq_ranges[${bind_cores_index}]}" - "${irq_ranges[$((bind_cores_index + num_q - 1))]}] ... >&2
-fset
+
   irqs=($(ls /sys/class/net/"$nic"/device/msi_irqs | sort -g))
   for ((irq = 0; irq < "$num_irqs"; irq++)); do
     tx_irq=${irqs[$irq]}
