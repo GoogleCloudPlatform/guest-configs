@@ -300,7 +300,12 @@ done
 
 XPS=/sys/class/net/e*/queues/tx*/xps_cpus
 num_cpus=$(nproc)
-[[ $num_cpus -gt 63 ]] && num_cpus=63
+
+if ! command -v bc &> /dev/null
+then
+    echo "bc not found: cannot calculate XPS cpu mask for multiqueue."
+    exit 1
+fi
 
 num_queues=0
 for q in $XPS; do
@@ -324,24 +329,24 @@ for q in $XPS; do
     queue_num=${BASH_REMATCH[1]}
   fi
 
-  xps=0
-  for cpu in `seq $queue_num $num_queues $((num_cpus - 1))`; do
-    xps=$((xps | (1 << cpu)))
+  cpu_mask=0
+  for cpu_bit in `seq $queue_num $num_queues $((num_cpus - 1))`; do
+    cpu_mask=$(echo "$cpu_mask + 2^$cpu_bit" | bc)
   done
 
   # Linux xps_cpus requires a hex number with commas every 32 bits. It ignores
   # all bits above # cpus, so write a list of comma separated 32 bit hex values
   # with a comma between dwords.
-  xps_dwords=()
+  cpu_mask_dwords=()
   for i in $(seq 0 $(((num_cpus - 1) / 32)))
   do
-    xps_dwords=(`printf "%08x" $((xps & 0xffffffff))` "${xps_dwords[@]}")
-    xps=$((xps >> 32))
+    cpu_mask_dwords=(`printf "%08x" $((cpu_mask & 0xffffffff))` "${cpu_mask_dwords[@]}")
+    cpu_mask=$(echo "$cpu_mask / 2^32" | bc)
   done
-  xps_string=$(IFS=, ; echo "${xps_dwords[*]}")
+  cpu_mask_string=$(IFS=, ; echo "${cpu_mask_dwords[*]}")
 
 
-  echo ${xps_string} > $q
+  echo ${cpu_mask_string} > $q
   printf "Queue %d XPS=%s for %s\n" $queue_num `cat $q` $q
 done | sort -n -k2
 
