@@ -17,6 +17,7 @@ Depends: ${misc:Depends},
          nvme-cli,
          jq,
          networkd-dispatcher,
+         bc,
          ${misc:Depends}
 Provides: irqbalance
 Recommends: rsyslog | system-log-daemon
