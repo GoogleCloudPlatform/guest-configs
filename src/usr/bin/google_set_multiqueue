@@ -252,14 +252,19 @@ concatenate_array_with_delimiter() {
     echo "$concatenated_string" # Output the concatenated string
 }
 
+get_max_tx_queue_number() {
+  max_queue_index=$(ls /sys/class/net/e*/queues/tx*/xps_cpus | awk -F'tx-' '{print $2}' | awk -F'/' '{print $1}' | sort -nr | head -n 1)
+  echo $(( max_queue_index + 1 ))
+}
+
 # For XPS affinity configuration, ensure that all devices located on the same NUMA node share an identical CPU mask for a given queue index.
 # Procedure:
 # 1. Based on the number of queues and total vCPU cores on each NUMA, calculate the vCPU range for each queue
 # 2. Convert the vCPU range into bit mask
 # 3. Apply the bit mask on each device under the same NUMA.
-function configure_xps_affinity() {
+function set_xps_affinity() {
   local numa="$1"
-  local num_queues="$2"
+  local num_queues=("$2")
   local xps_path="$3"
   local cpus=("${@:4}")
 
@@ -278,7 +283,7 @@ function configure_xps_affinity() {
     interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
     nic_numa_node=$(cat /sys/class/net/"$interface"/device/numa_node)
 
-    if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && [[ $nic_numa_node -ne $numa ]] && ! $(is_gvnic "$interface"); then
+    if ( [[ "$IS_MULTINIC_ACCELERATOR_PLATFORM" == 0 ]] && ! is_gvnic "$interface" ) || [[ "$nic_numa_node" -ne "$numa" ]]; then
       continue
     fi
 
@@ -393,23 +398,17 @@ unpack_irq_ranges "${packed_numa0_vcpu_ranges[0]}" numa0_vcpu_ranges
 declare -a numa1_vcpu_ranges
 unpack_irq_ranges "${packed_numa1_vcpu_ranges[0]}" numa1_vcpu_ranges
 
-echo -e "vCPUs on NUMA0 [${numa0_vcpu_ranges[@]}]\n"
-echo -e "vCPUs on NUMA1 [${numa1_vcpu_ranges[@]}]\n"
+echo -e "vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]\n"
+echo -e "vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]\n"
 
 XPS_PATH=/sys/class/net/e*/queues/tx*/xps_cpus
-num_queues=0
-for q in $XPS_PATH; do
-  interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
-  if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
-    continue
-  fi
-  num_queues=$((num_queues + 1))
-done
+num_queues=$(get_max_tx_queue_number)
+
 echo "Configuring XPS affinity for devices on NUMA 0"
-configure_xps_affinity 0 "$num_queues" "$XPS_PATH" "${numa0_vcpu_ranges[@]}"
+set_xps_affinity 0 "$num_queues" "$XPS_PATH" "${numa0_vcpu_ranges[@]}"
 
 echo "Configuring XPS affinity for devices on NUMA 1"
-configure_xps_affinity 1 "$num_queues" "$XPS_PATH" "${numa1_vcpu_ranges[@]}"
+set_xps_affinity 1 "$num_queues" "$XPS_PATH" "${numa1_vcpu_ranges[@]}"
 
 if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
   exit
