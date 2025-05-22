@@ -171,10 +171,6 @@ function get_vcpu_ranges_on_accelerator_platform {
   numa0_irq_range1="${numa0_irq_range[0]#*,}"
 
   numa0_irq_range0_start=$(echo "$numa0_irq_range0" | cut -d '-' -f 1)
-  # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
-  # used by the system.
-  numa0_irq_range0_start=$((numa0_irq_range0_start + 1))
-  
   numa0_irq_range0_end=$(echo "$numa0_irq_range0" | cut -d '-' -f 2)
   numa0_irq_range1_start=$(echo "$numa0_irq_range1" | cut -d '-' -f 1)
   numa0_irq_range1_end=$(echo "$numa0_irq_range1" | cut -d '-' -f 2)
@@ -200,6 +196,18 @@ function get_vcpu_ranges_on_accelerator_platform {
   "$numa1_irq_range1_end")
 }
 
+# function unpack_cpu_ranges() {
+#     local -n input_ranges="$1"
+#     local -n unpacked_cpus="$2"
+#     for ((i=0; i<${#input_ranges[@]}; i+=2)); do
+#         local start="${input_ranges[$i]}"
+#         local end="${input_ranges[$((i+1))]}"
+
+#         for ((core_number=start; core_number<=end; core_number++)); do
+#             unpacked_cpus+=("$core_number")
+#         done
+#     done
+# }
 function unpack_irq_ranges() {
     local input_ranges=($1)
     local -n irq_ranges="$2"
@@ -259,24 +267,45 @@ get_max_tx_queue_number() {
 
 # For XPS affinity configuration, ensure that all devices located on the same NUMA node share an identical CPU mask for a given queue index.
 # Procedure:
-# 1. Based on the number of queues and total vCPU cores on each NUMA, calculate the vCPU range for each queue
-# 2. Convert the vCPU range into bit mask
+# 1. Use round robin to assign a queue to each core
+# 2. Use round robin to distrubte the vCPUs in a core to the assigned queues
+# 2. Convert the vCPUs into a bit mask
 # 3. Apply the bit mask on each device under the same NUMA.
 function set_xps_affinity() {
   local numa="$1"
   local num_queues=("$2")
   local xps_path="$3"
-  local cpus=("${@:4}")
+  local cpu_ranges=("${@:4}")
+  num_sockets=$((${#cpu_ranges[@]} / 2))
 
-  total_vcpus=${#cpus[@]}
-  cpus_per_queue=$(( total_vcpus / num_queues ))
+  printf "Configuring XPS affinity on NUMA %d for %d queues with CPU ranges %s and %d sockets\n" "$numa" "$num_queues" "[${cpu_ranges[*]}]" "$num_sockets"
+
+  # 1. Assign queues to each socket
+  sockets_to_queues=()
   queue_cpus=()
+  for ((socket=0; socket < num_sockets; socket+=1 )); do
+    sockets_to_queues+=("")
+  done
 
+  socket_index=0
   for (( queue=0; queue < num_queues; queue+=1 )); do
-    start=$(( queue * cpus_per_queue ))
-    local assigned_cpus_array=("${cpus[@]:start:cpus_per_queue}")
-    assigned_cpus_string=$(concatenate_array_with_delimiter "," "${assigned_cpus_array[@]}")
-    queue_cpus+=("$assigned_cpus_string")
+    sockets_to_queues[$socket_index]+="$queue "
+    socket_index=$(( (socket_index + 1) % num_sockets ))
+    queue_cpus+=("")
+  done
+
+  # 2. Assign vCPUs in a socket to the assigned queues
+  for (( socket_index=0; socket_index < num_sockets; socket_index+=1 )); do
+    range_start=${cpu_ranges[socket_index*2]}
+    range_end=${cpu_ranges[socket_index*2 + 1]}
+    queue_index=0
+    _queues=(${sockets_to_queues[$socket_index]})
+
+    for (( vcpu=range_start; vcpu <= range_end; vcpu+=1 )); do
+      _queue_index=${_queues[$queue_index]}
+      queue_cpus[$_queue_index]+="$vcpu,"
+      queue_index=$(( (queue_index + 1) % ${#_queues[@]} ))
+    done
   done
 
   for q in $xps_path; do
@@ -292,7 +321,6 @@ function set_xps_affinity() {
       queue_num=${BASH_REMATCH[1]}
     fi
 
-    # cpu_mask="${cpu_masks[queue_num]}"
     cpu_mask=$(rangelist_to_bitmap ${queue_cpus[queue_num]} $(nproc))
     echo ${cpu_mask} > $q
     printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" $queue_num $q ${queue_cpus[queue_num]} `cat $q`
@@ -387,26 +415,27 @@ done
 vcpu_ranges=()
 get_vcpu_ranges_on_accelerator_platform vcpu_ranges
 
-packed_numa0_vcpu_ranges=(
-  "${vcpu_ranges[0]} ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
+numa0_vcpu_ranges=(
+  "${vcpu_ranges[0]}"
+  "${vcpu_ranges[1]}"
+  "${vcpu_ranges[2]}"
+  "${vcpu_ranges[3]}"
 )
-packed_numa1_vcpu_ranges=(
-  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
+numa1_vcpu_ranges=(
+  "${vcpu_ranges[4]}"
+  "${vcpu_ranges[5]}"
+  "${vcpu_ranges[6]}"
+  "${vcpu_ranges[7]}"
 )
-declare -a numa0_vcpu_ranges
-unpack_irq_ranges "${packed_numa0_vcpu_ranges[0]}" numa0_vcpu_ranges
-declare -a numa1_vcpu_ranges
-unpack_irq_ranges "${packed_numa1_vcpu_ranges[0]}" numa1_vcpu_ranges
 
-echo -e "vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]\n"
-echo -e "vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]\n"
-
+echo -e "\nXPS vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]"
 XPS_PATH=/sys/class/net/e*/queues/tx*/xps_cpus
 num_queues=$(get_max_tx_queue_number)
 
 echo "Configuring XPS affinity for devices on NUMA 0"
 set_xps_affinity 0 "$num_queues" "$XPS_PATH" "${numa0_vcpu_ranges[@]}"
 
+echo -e "\nXPS vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]"
 echo "Configuring XPS affinity for devices on NUMA 1"
 set_xps_affinity 1 "$num_queues" "$XPS_PATH" "${numa1_vcpu_ranges[@]}"
 
@@ -433,39 +462,54 @@ fi
 # enp134s0
 # enp140s0
 
+# Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
+# used by the system.
+packed_numa0_irq_ranges=(
+  "$((vcpu_ranges[0] + 1)) ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
+)
+packed_numa1_irq_ranges=(
+  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
+)
+declare -a numa0_irq_ranges
+unpack_irq_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
+declare -a numa1_irq_ranges
+unpack_irq_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
+
+echo -e "\nSetting IRQ affinity with vCPUs on NUMA0 [${numa0_irq_ranges[@]}]"
 bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
+    echo "$nic_name is not gvnic device, skipping set irq on this device" >&2
     continue
   fi
 
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
+  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ." >&2
 
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 0 ]]; then
     continue
   fi
 
-  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa0_vcpu_ranges[@]}")
+  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
 done
 
+echo -e "\nSetting IRQ affinity with vCPUs on NUMA1 [${numa1_irq_ranges[@]}]"
 bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
   if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
+    echo "$nic_name is not gvnic device, skipping set irq on this device" >&2
     continue
   fi
 
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
+  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ." >&2
 
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 1 ]]; then
     continue
   fi
 
-  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_begin" "${numa1_vcpu_ranges[@]}")
+  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
 done
   
