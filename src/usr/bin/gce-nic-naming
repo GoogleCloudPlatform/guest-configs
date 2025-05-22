@@ -26,7 +26,8 @@ declare PCI_BUS_PATH='/sys/bus/pci/devices'
 declare SYS_PREPEND_PATH='/sys'
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
-readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c')
+# 0x8086:0x1452 is the vendor and device ID for Intel NIC
+readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c' '8086:1452')
 # 0x10de is the vendor ID for Nvidia
 readonly GPU_DEVICES_VENDORS=('10de' '10de')
 # PCI BUS ID path is in the format of 0000:00:04.0
@@ -132,7 +133,7 @@ function determine_index_ratios() {
 #   accelerator_devices: Array of processor devices
 #   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
 # Arguments:
-#   $1: Name refernece to the array of ethernet devices
+#   $1: Name reference to the array of ethernet devices
 #   $2: Name reference to the array of processor devices
 #   $@: Paths to search for devices
 ###############################
@@ -455,14 +456,26 @@ function generate_name() {
   fi
 
   local eth_device_vendor="${ethernet_devices[${int_id}]}"
-
   local name_builder=""
 
-  if [[ ${accelerator_devices[*]} == "" ]] ; then
+  # Diorite NIC
+  if [[ ${eth_device_vendor} == "8086:1452" ]]; then
+    local old_name=$(basename ${device_path})
+    local new_name="eth${eth_index}"
+    name_builder="$new_name"
+
+    # Temporarily rename to avoid naming collisions: udev will overwrite the
+    # temporary name with the correct, final name
+    if [[ "$new_name" != "$old_name" ]]; then
+        notice "Renaming ${old_name} to ${new_name}"
+        /sbin/ip link set $new_name down
+        /sbin/ip link set $new_name name "${new_name}tmp"
+        /sbin/ip link set "${new_name}tmp" up
+    fi
+  elif [[ ${accelerator_devices[*]} == "" ]] ; then
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
     [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
       if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
-
         name_builder="rdma${eth_index}"
       elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device" ]]; then
         # If this is a VF device and not an RDMA we do not want this device
@@ -473,7 +486,6 @@ function generate_name() {
       else
         # If device path is empty it indicates other changes happening so this script will skip
         error_and_exit "DEVPATH provided is empty, skipping naming. Path:${SYS_PREPEND_PATH}${DEVPATH}"
-
       fi
     else
       error_and_exit "Device is not for intent based name: "\
