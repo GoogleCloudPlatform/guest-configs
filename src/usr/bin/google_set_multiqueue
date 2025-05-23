@@ -209,6 +209,31 @@ function unpack_cpu_ranges() {
     done
 }
 
+function bitmap_to_rangelist() { # bitmap
+  local bitmap="${1:-}" # must be non empty, only hex digits and commas
+
+  [[ "${bitmap}" =~ ^[0-9a-fA-F,]+$ ]] || return 1
+  bitmap="${bitmap//,/}"                # remove commas
+
+  local comma='' ret=''
+  local bit=0 l=-1 h=0 # current bit and range boundaries
+  local i j # process one character at a time starting from right (low index)
+  for ((i = ${#bitmap} - 1; i >= 0; i--)); do
+    local cur="0x${bitmap:${i}:1}"
+    for ((j = 0; j < 4; j++, bit++, cur >>= 1)); do
+      (( cur & 1 )) || continue                             # bit is 0
+      (( l < 0 )) && (( l = bit, h = bit, 1 )) && continue  # first bit
+      (( bit == h + 1 )) && (( h = bit, 1 )) && continue    # extend range
+      ret+="${comma}${l}" ; (( l != h )) && ret+="-${h}"    # add range
+      (( l = bit, h = bit ))                                # start new interval
+      comma=","
+    done
+  done
+  (( l < 0 )) && return
+  ret+="${comma}${l}"; (( l != h )) && ret+="-${h}"         # add final entry
+  echo $ret
+}
+
 function rangelist_to_bitmap() { # list highest_cpu
   local ranges="${1:-}" # can be empty, only digits, commas and dash
   local highest=${2:-1} # highest CPU
@@ -234,73 +259,27 @@ function rangelist_to_bitmap() { # list highest_cpu
   echo $ret
 }
 
-concatenate_array_with_delimiter() {
-    local delimiter="$1"
-    shift                # Remove the delimiter from the arguments list
-    local elements=("$@") # Remaining arguments are the array elements
-
-    local old_ifs="$IFS"
-    IFS="$delimiter"
-
-    local concatenated_string="${elements[*]}"
-
-    IFS="$old_ifs"
-    echo "$concatenated_string"
-}
-
-get_max_tx_queue_number() {
-  max_queue_index=$(ls /sys/class/net/e*/queues/tx*/xps_cpus | awk -F'tx-' '{print $2}' | awk -F'/' '{print $1}' | sort -nr | head -n 1)
-  echo $(( max_queue_index + 1 ))
-}
-
-# For XPS affinity configuration, ensure that all devices located on the same NUMA node share an identical CPU mask for a given queue index.
-# Procedure:
-# 1. Use round robin to assign a queue to each core
-# 2. Use round robin to distrubte the vCPUs in a core to the assigned queues
-# 2. Convert the vCPUs into a bit mask
-# 3. Apply the bit mask on each device under the same NUMA.
+# For XPS affinity configuration, we'd do the following assignment:
+# 1. For each interface, divide the queues into two halves
+# 2. Assign all the vCPUs on NUMA0 to the first half of the queues
+# 3. Assign all the vCPUs on NUMA1 to the second half of the queues
+# This function will have to be called once for each NUMA.
 function set_xps_affinity() {
   local numa="$1"
-  local num_queues=("$2")
+  local num_numa_nodes="$2"
   local xps_path="$3"
-  local cpu_ranges=("${@:4}")
-  num_sockets=$((${#cpu_ranges[@]} / 2))
+  local cpu_mask="$4"
 
-  printf "Configuring XPS affinity on NUMA %d for %d queues with CPU ranges %s and %d sockets\n" "$numa" "$num_queues" "[${cpu_ranges[*]}]" "$num_sockets"
+  # 1. Generate cpu masks
+  local cpus=$(bitmap_to_rangelist $cpu_mask)
+  echo "cpu_mask: $cpu_mask, cpus: $cpus"
 
-  # 1. Assign queues to each socket
-  sockets_to_queues=()
-  queue_cpus=()
-  for ((socket=0; socket < num_sockets; socket+=1 )); do
-    sockets_to_queues+=("")
-  done
-
-  socket_index=0
-  for (( queue=0; queue < num_queues; queue+=1 )); do
-    sockets_to_queues[$socket_index]+="$queue "
-    socket_index=$(( (socket_index + 1) % num_sockets ))
-    queue_cpus+=("")
-  done
-
-  # 2. Assign vCPUs in a socket to the assigned queues
-  for (( socket_index=0; socket_index < num_sockets; socket_index+=1 )); do
-    range_start=${cpu_ranges[socket_index*2]}
-    range_end=${cpu_ranges[socket_index*2 + 1]}
-    queue_index=0
-    _queues=(${sockets_to_queues[$socket_index]})
-
-    for (( vcpu=range_start; vcpu <= range_end; vcpu+=1 )); do
-      _queue_index=${_queues[$queue_index]}
-      queue_cpus[$_queue_index]+="$vcpu,"
-      queue_index=$(( (queue_index + 1) % ${#_queues[@]} ))
-    done
-  done
-
+  # 2. For each tx queue under an interface, assign the CPU mask
+  # if it maps to the corresponding NUMA.
   for q in $xps_path; do
     interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
-    nic_numa_node=$(cat /sys/class/net/"$interface"/device/numa_node)
 
-    if ( [[ "$IS_MULTINIC_ACCELERATOR_PLATFORM" == 0 ]] && ! is_gvnic "$interface" ) || [[ "$nic_numa_node" -ne "$numa" ]]; then
+    if ( [[ "$IS_MULTINIC_ACCELERATOR_PLATFORM" == 0 ]] && ! is_gvnic "$interface" ); then
       continue
     fi
 
@@ -309,9 +288,10 @@ function set_xps_affinity() {
       queue_num=${BASH_REMATCH[1]}
     fi
 
-    cpu_mask=$(rangelist_to_bitmap ${queue_cpus[queue_num]} $(nproc))
-    echo ${cpu_mask} > $q
-    printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" $queue_num $q ${queue_cpus[queue_num]} `cat $q`
+    if [ $((queue_num % num_numa_nodes)) -eq "$numa" ]; then
+      echo ${cpu_mask} > $q
+      printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" $queue_num $q $cpus `cat $q`
+    fi
   done | sort -n -k2 
 }
 
@@ -404,28 +384,25 @@ vcpu_ranges=()
 get_vcpu_ranges_on_accelerator_platform vcpu_ranges
 
 numa0_vcpu_ranges=(
-  "${vcpu_ranges[0]}"
-  "${vcpu_ranges[1]}"
-  "${vcpu_ranges[2]}"
-  "${vcpu_ranges[3]}"
+  "${vcpu_ranges[0]}-${vcpu_ranges[1]},${vcpu_ranges[2]}-${vcpu_ranges[3]}"
 )
+
 numa1_vcpu_ranges=(
-  "${vcpu_ranges[4]}"
-  "${vcpu_ranges[5]}"
-  "${vcpu_ranges[6]}"
-  "${vcpu_ranges[7]}"
+  "${vcpu_ranges[4]}-${vcpu_ranges[5]},${vcpu_ranges[6]}-${vcpu_ranges[7]}"
 )
 
-echo -e "\nXPS vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]"
+NUM_NUMA_NODES=2
 XPS_PATH=/sys/class/net/e*/queues/tx*/xps_cpus
-num_queues=$(get_max_tx_queue_number)
 
-echo "Configuring XPS affinity for devices on NUMA 0"
-set_xps_affinity 0 "$num_queues" "$XPS_PATH" "${numa0_vcpu_ranges[@]}"
+echo -e "\nXPS vCPUs on NUMA0 $numa0_vcpu_ranges"
+echo -e "Configuring XPS affinity for devices on NUMA 0"
+cpu_mask=$(rangelist_to_bitmap $numa0_vcpu_ranges $(nproc))
+set_xps_affinity 0 "$NUM_NUMA_NODES" "$XPS_PATH" "$cpu_mask"
 
-echo -e "\nXPS vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]"
-echo "Configuring XPS affinity for devices on NUMA 1"
-set_xps_affinity 1 "$num_queues" "$XPS_PATH" "${numa1_vcpu_ranges[@]}"
+echo -e "\nXPS vCPUs on NUMA1 $numa1_vcpu_ranges"
+echo -e "Configuring XPS affinity for devices on NUMA 1"
+cpu_mask=$(rangelist_to_bitmap $numa1_vcpu_ranges $(nproc))
+set_xps_affinity 1 "$NUM_NUMA_NODES" "$XPS_PATH" "$cpu_mask"
 
 if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
   exit
