@@ -196,19 +196,7 @@ function get_vcpu_ranges_on_accelerator_platform {
   "$numa1_irq_range1_end")
 }
 
-# function unpack_cpu_ranges() {
-#     local -n input_ranges="$1"
-#     local -n unpacked_cpus="$2"
-#     for ((i=0; i<${#input_ranges[@]}; i+=2)); do
-#         local start="${input_ranges[$i]}"
-#         local end="${input_ranges[$((i+1))]}"
-
-#         for ((core_number=start; core_number<=end; core_number++)); do
-#             unpacked_cpus+=("$core_number")
-#         done
-#     done
-# }
-function unpack_irq_ranges() {
+function unpack_cpu_ranges() {
     local input_ranges=($1)
     local -n irq_ranges="$2"
     for ((i=0; i<${#input_ranges[@]}; i+=2)); do
@@ -247,17 +235,17 @@ function rangelist_to_bitmap() { # list highest_cpu
 }
 
 concatenate_array_with_delimiter() {
-    local delimiter="$1" # The first argument is the delimiter
+    local delimiter="$1"
     shift                # Remove the delimiter from the arguments list
     local elements=("$@") # Remaining arguments are the array elements
 
-    local old_ifs="$IFS" # Save the current IFS
-    IFS="$delimiter"     # Set IFS to the desired delimiter
+    local old_ifs="$IFS"
+    IFS="$delimiter"
 
-    local concatenated_string="${elements[*]}" # Concatenate elements
+    local concatenated_string="${elements[*]}"
 
-    IFS="$old_ifs"       # Restore the original IFS
-    echo "$concatenated_string" # Output the concatenated string
+    IFS="$old_ifs"
+    echo "$concatenated_string"
 }
 
 get_max_tx_queue_number() {
@@ -471,9 +459,9 @@ packed_numa1_irq_ranges=(
   "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
 )
 declare -a numa0_irq_ranges
-unpack_irq_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
+unpack_cpu_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
 declare -a numa1_irq_ranges
-unpack_irq_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
+unpack_cpu_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
 
 echo -e "\nSetting IRQ affinity with vCPUs on NUMA0 [${numa0_irq_ranges[@]}]"
 bind_cores_index=0
