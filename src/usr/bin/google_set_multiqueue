@@ -418,6 +418,6 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
     continue
   fi
 
-  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_begin" "${numa1_irq_ranges[@]}")
+  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
 done
   
