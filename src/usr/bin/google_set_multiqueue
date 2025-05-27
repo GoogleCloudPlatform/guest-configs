@@ -317,7 +317,7 @@ function set_xps_affinity() {
     queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
 
     # the number of CPUs to assign per queue
-    cpus_per_queue=$((${#cpus[@]} / queues_per_numa))
+    cpus_per_queue=$(( total_vcpus / queues_per_numa))
 
     echo "nic=$nic tx_queue_count=$tx_queue_count queues_per_numa=$queues_per_numa cpus_per_queue=$cpus_per_queue"
 
@@ -326,6 +326,11 @@ function set_xps_affinity() {
     for (( queue=queue_offset; queue<queue_offset+queues_per_numa; queue+=1 )); do
       xps_path=/sys/class/net/$nic/queues/tx-$queue/xps_cpus
       xps_cpus=""
+
+      # Assign all the remaining CPUs to the last queue
+      if [[ queue -eq $(( queue_offset + queues_per_numa - 1 )) ]]; then
+        cpus_per_queue=$(( total_vcpus - cpu_index ))
+      fi 
 
       for (( i=0; i<cpus_per_queue; i+=1 )); do
         xps_cpus+="${cpus[cpu_index]},"
@@ -341,7 +346,7 @@ function set_xps_affinity() {
         "$xps_path" \
         "$(bitmap_to_rangelist "$cpu_mask")" \
         "$cpu_mask"
-    done
+    done 
   done
 }
 
