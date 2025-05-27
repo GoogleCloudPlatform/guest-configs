@@ -303,7 +303,7 @@ get_nic_tx_queue_count() {
 # This function will have to be called once for each NUMA.
 function set_xps_affinity() {
   local numa="$1"
-  local cpus=("${@:3}")
+  local cpus=("${@:2}")
 
   total_vcpus=${#cpus[@]}
   num_numa_nodes=2
