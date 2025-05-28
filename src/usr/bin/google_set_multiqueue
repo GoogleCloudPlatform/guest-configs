@@ -86,10 +86,6 @@ function set_irq_range() {
     # number of queues.
     tx_queue=/sys/class/net/"$nic"/queues/tx-"$irq"
     if ls $tx_queue 1> /dev/null 2>&1; then
-      # XPS (Transmit Packet Steering) allows a core to decide which queue to
-      # select if its mask is found in one of the queue's xps_cpus
-      cp /proc/irq/"$tx_irq"/smp_affinity $tx_queue/xps_cpus
-
       echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
       echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)" >&2
     else
@@ -275,27 +271,6 @@ get_network_interfaces() {
     echo "${network_interfaces[@]}"
 }
 
-get_nic_tx_queue_count() {
-    local nic_name="$1"
-    local tx_count=0
-
-    tx_count=$(sudo ethtool -l "$nic_name" 2>/dev/null | awk '
-        /Current hardware settings:/ {found_settings = 1}
-        found_settings && /TX:/ {
-            print $2;
-            exit;
-        }
-    ')
-
-    if ! [[ "$tx_count" =~ ^[0-9]+$ ]]; then
-        echo "Warning: Could not extract a valid TX queue count for '${nic_name}'." >&2
-        tx_count=0
-    fi
-
-    echo "$tx_count"
-    return 0
-}
-
 # For XPS affinity configuration, we'd do the following assignment:
 # 1. For each interface, divide the queues into two halves
 # 2. Evenly distribute the vCPUs on NUMA0 to the first half of the queues
@@ -311,7 +286,7 @@ function set_xps_affinity() {
 
   IFS=' ' read -r -a nics <<< "$nics_string"
   for nic in "${nics[@]}"; do
-    tx_queue_count=$(get_nic_tx_queue_count $nic)
+    tx_queue_count=$(ls -1 /sys/class/net/"$nic"/queues/ | grep tx | wc -l)
 
     # the number of queues to assign CPUs for this NUMA node.
     queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
