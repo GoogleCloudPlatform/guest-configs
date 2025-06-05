@@ -86,10 +86,6 @@ function set_irq_range() {
     # number of queues.
     tx_queue=/sys/class/net/"$nic"/queues/tx-"$irq"
     if ls $tx_queue 1> /dev/null 2>&1; then
-      # XPS (Transmit Packet Steering) allows a core to decide which queue to
-      # select if its mask is found in one of the queue's xps_cpus
-      cp /proc/irq/"$tx_irq"/smp_affinity $tx_queue/xps_cpus
-
       echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
       echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)" >&2
     else
@@ -171,10 +167,6 @@ function get_vcpu_ranges_on_accelerator_platform {
   numa0_irq_range1="${numa0_irq_range[0]#*,}"
 
   numa0_irq_range0_start=$(echo "$numa0_irq_range0" | cut -d '-' -f 1)
-  # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
-  # used by the system.
-  numa0_irq_range0_start=$((numa0_irq_range0_start + 1))
-  
   numa0_irq_range0_end=$(echo "$numa0_irq_range0" | cut -d '-' -f 2)
   numa0_irq_range1_start=$(echo "$numa0_irq_range1" | cut -d '-' -f 1)
   numa0_irq_range1_end=$(echo "$numa0_irq_range1" | cut -d '-' -f 2)
@@ -200,7 +192,7 @@ function get_vcpu_ranges_on_accelerator_platform {
   "$numa1_irq_range1_end")
 }
 
-function unpack_irq_ranges() {
+function unpack_cpu_ranges() {
     local input_ranges=($1)
     local -n irq_ranges="$2"
     for ((i=0; i<${#input_ranges[@]}; i+=2)); do
@@ -211,6 +203,132 @@ function unpack_irq_ranges() {
             irq_ranges+=("$core_number")
         done
     done
+}
+
+# Converts a hexadecimal bitmap to rangelist
+# ex. bitmap=00000000,00000000,00fff000,000003ff CPUs=0-9,44-55
+function bitmapbitmap_to_rangelist() { # bitmap
+  local bitmap="${1:-}" # must be non empty, only hex digits and commas
+
+  [[ "${bitmap}" =~ ^[0-9a-fA-F,]+$ ]] || return 1
+  bitmap="${bitmap//,/}"                # remove commas
+
+  local comma='' ret=''
+  local bit=0 l=-1 h=0 # current bit and range boundaries
+  local i j # process one character at a time starting from right (low index)
+  for ((i = ${#bitmap} - 1; i >= 0; i--)); do
+    local cur="0x${bitmap:${i}:1}"
+    for ((j = 0; j < 4; j++, bit++, cur >>= 1)); do
+      (( cur & 1 )) || continue                             # bit is 0
+      (( l < 0 )) && (( l = bit, h = bit, 1 )) && continue  # first bit
+      (( bit == h + 1 )) && (( h = bit, 1 )) && continue    # extend range
+      ret+="${comma}${l}" ; (( l != h )) && ret+="-${h}"    # add range
+      (( l = bit, h = bit ))                                # start new interval
+      comma=","
+    done
+  done
+  (( l < 0 )) && return
+  ret+="${comma}${l}"; (( l != h )) && ret+="-${h}"         # add final entry
+  echo $ret
+}
+
+# Converts a list of CPUs to a hexadecimal bitmap
+# ex. CPUs=[0,1,2,3,4,5,6,7,8,9,44,45,46,47,48,49,50,51,52,53,54,55]
+# bitmap=00000000,00000000,00fff000,000003ff
+function rangelist_to_bitmap() { # list highest_cpu
+  local ranges="${1:-}" # can be empty, only digits, commas and dash
+  local highest=${2:-1} # highest CPU
+  [[ "${ranges}" =~ ^[0-9,-]*$ ]] || return 1
+  ranges="${ranges//,/ }"       # replace comma with space
+
+  local digits=()
+  local range i l h
+  for range in $ranges; do
+    read l h <<< $(echo ${range/-/ })
+    [[ -z "$h" ]] && h=l
+    for ((i = l; i <= h; i++)) { (( digits[i / 4] |= 1 << (i & 3) )); }
+    (( highest = h > highest ? h : highest))
+  done
+
+  # Print in reverse order with commas
+  local ret="" hex="0123456789abcdef"
+  (( h = (highest + 31) / 32 * 8 )) # make a multiple of 32 CPUs
+  for (( i = h - 1; i >= 0; i--)) ; do
+    ret+="${hex:${digits[$i]}:1}"
+    (( i & 7 || i == 0)) || ret+=","
+  done
+  echo $ret
+}
+
+# Returns all the network interface names excluding "lo"
+get_network_interfaces() {
+    local network_interfaces=()
+
+    for nic_dir in /sys/class/net/*; do
+        local nic_name=$(basename "${nic_dir}")
+
+        if [[ "${nic_name}" == "lo" || ! -e "${nic_dir}/device" ]]; then
+            continue
+        fi
+
+        network_interfaces+=("${nic_name}")
+    done
+
+    echo "${network_interfaces[@]}"
+}
+
+# For XPS affinity configuration, we'd do the following assignment:
+# 1. For each interface, divide the queues into two halves
+# 2. Evenly distribute the vCPUs on NUMA0 to the first half of the queues
+# 3. Evenly distribute the vCPUs on NUMA1 to the second half of the queues
+# This function will have to be called once for each NUMA.
+function set_xps_affinity() {
+  local numa="$1"
+  local cpus=("${@:2}")
+
+  total_vcpus=${#cpus[@]}
+  num_numa_nodes=2
+  nics_string=$(get_network_interfaces)
+
+  IFS=' ' read -r -a nics <<< "$nics_string"
+  for nic in "${nics[@]}"; do
+    tx_queue_count=$(ls -1 /sys/class/net/"$nic"/queues/ | grep tx | wc -l)
+
+    # the number of queues to assign CPUs for this NUMA node.
+    queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
+
+    # the number of CPUs to assign per queue
+    cpus_per_queue=$(( total_vcpus / queues_per_numa))
+
+    echo "nic=$nic tx_queue_count=$tx_queue_count queues_per_numa=$queues_per_numa cpus_per_queue=$cpus_per_queue"
+
+    cpu_index=0
+    queue_offset=$(( queues_per_numa*numa ))
+    for (( queue=queue_offset; queue<queue_offset+queues_per_numa; queue+=1 )); do
+      xps_path=/sys/class/net/$nic/queues/tx-$queue/xps_cpus
+      xps_cpus=""
+
+      # Assign all the remaining CPUs to the last queue
+      if [[ queue -eq $(( queue_offset + queues_per_numa - 1 )) ]]; then
+        cpus_per_queue=$(( total_vcpus - cpu_index ))
+      fi 
+
+      for (( i=0; i<cpus_per_queue; i+=1 )); do
+        xps_cpus+="${cpus[cpu_index]},"
+        cpu_index=$(( cpu_index + 1 ))
+      done
+
+      # remove the last ","
+      xps_cpus="${xps_cpus%,}"
+      cpu_mask=$(rangelist_to_bitmap $xps_cpus $(nproc))
+      echo ${cpu_mask} > $xps_path
+      printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" \
+        "$queue" \
+        "$xps_path" \
+        "$(bitmap_to_rangelist "$cpu_mask")" \
+        "$cpu_mask"
+    done 
+  done
 }
 
 echo "Running $(basename $0)."
@@ -298,52 +416,27 @@ for i in /proc/irq/*; do
   fi
 done
 
-XPS=/sys/class/net/e*/queues/tx*/xps_cpus
-num_cpus=$(nproc)
-[[ $num_cpus -gt 63 ]] && num_cpus=63
+vcpu_ranges=()
+get_vcpu_ranges_on_accelerator_platform vcpu_ranges
 
-num_queues=0
-for q in $XPS; do
-  interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
-  if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
-    continue
-  fi
-  num_queues=$((num_queues + 1))
-done
+packed_numa0_vcpu_ranges=(
+  "${vcpu_ranges[0]} ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
+)
+packed_numa1_vcpu_ranges=(
+  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
+)
+declare -a numa0_vcpu_ranges
+unpack_cpu_ranges "${packed_numa0_vcpu_ranges[0]}" numa0_vcpu_ranges
+declare -a numa1_vcpu_ranges
+unpack_cpu_ranges "${packed_numa1_vcpu_ranges[0]}" numa1_vcpu_ranges
 
-# If we have more CPUs than queues, then stripe CPUs across tx affinity
-# as CPUNumber % queue_count.
-for q in $XPS; do
-  interface=$(echo "$q" | grep -oE 'net/([^/]+)' | cut -d'/' -f2)
-  if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]] && ! $(is_gvnic "$interface"); then
-    continue
-  fi
+echo -e "\nConfiguring XPS affinity for devices on NUMA 0"
+echo -e "vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]"
+set_xps_affinity 0 "${numa0_vcpu_ranges[@]}"
 
-  queue_re=".*tx-([0-9]+).*$"
-  if [[ "$q" =~ ${queue_re} ]]; then
-    queue_num=${BASH_REMATCH[1]}
-  fi
-
-  xps=0
-  for cpu in `seq $queue_num $num_queues $((num_cpus - 1))`; do
-    xps=$((xps | (1 << cpu)))
-  done
-
-  # Linux xps_cpus requires a hex number with commas every 32 bits. It ignores
-  # all bits above # cpus, so write a list of comma separated 32 bit hex values
-  # with a comma between dwords.
-  xps_dwords=()
-  for i in $(seq 0 $(((num_cpus - 1) / 32)))
-  do
-    xps_dwords=(`printf "%08x" $((xps & 0xffffffff))` "${xps_dwords[@]}")
-    xps=$((xps >> 32))
-  done
-  xps_string=$(IFS=, ; echo "${xps_dwords[*]}")
-
-
-  echo ${xps_string} > $q
-  printf "Queue %d XPS=%s for %s\n" $queue_num `cat $q` $q
-done | sort -n -k2
+echo -e "\nConfiguring XPS affinity for devices on NUMA 1"
+echo -e "vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]"
+set_xps_affinity 1 "${numa1_vcpu_ranges[@]}"
 
 if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
   exit
@@ -368,23 +461,20 @@ fi
 # enp134s0
 # enp140s0
 
-irq_ranges=()
-get_vcpu_ranges_on_accelerator_platform irq_ranges
-
+# Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
+# used by the system.
 packed_numa0_irq_ranges=(
-  "${irq_ranges[0]} ${irq_ranges[1]} ${irq_ranges[2]} ${irq_ranges[3]}"
+  "$((vcpu_ranges[0] + 1)) ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
 )
 packed_numa1_irq_ranges=(
-  "${irq_ranges[4]} ${irq_ranges[5]} ${irq_ranges[6]} ${irq_ranges[7]}"
+  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
 )
 declare -a numa0_irq_ranges
-unpack_irq_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
+unpack_cpu_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
 declare -a numa1_irq_ranges
-unpack_irq_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
+unpack_cpu_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
 
-echo -e "Binding vCPUs on NUMA0 [${numa0_irq_ranges[@]}]\n"
-echo -e "Binding vCPUs on NUMA1 [${numa1_irq_ranges[@]}]\n"
-
+echo -e "\nSetting IRQ affinity with vCPUs on NUMA0 [${numa0_irq_ranges[@]}]"
 bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
@@ -393,7 +483,7 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
     continue
   fi
 
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ."
+  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
 
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 0 ]]; then
@@ -403,6 +493,7 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
   bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
 done
 
+echo -e "\nSetting IRQ affinity with vCPUs on NUMA1 [${numa1_irq_ranges[@]}]"
 bind_cores_index=0
 find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
@@ -411,7 +502,7 @@ find /sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | so
     continue
   fi
 
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name ."
+  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
 
   nic_numa_node=$(cat /sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 1 ]]; then
