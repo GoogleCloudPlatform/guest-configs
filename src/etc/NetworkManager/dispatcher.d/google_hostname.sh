@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 if [[ $2 == "up" ]]; then
-	new_host_name=$DHCP4_HOST_NAME new_ip_address=${DHCP4_IP_ADDRESS%%/*} google_set_hostname
+	instance=$(curl -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/?recursive=true)
+	new_ip_address=$(jq -r .networkInterfaces[0].ip <<< $instance) new_host_name=$(jq -r .hostname <<< $instance) google_set_hostname
 fi
 
