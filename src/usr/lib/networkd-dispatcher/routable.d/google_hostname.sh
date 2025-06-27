@@ -12,6 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
+
 instance=$(curl -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/?recursive=true)
+
+# Ensure that the hostname and IP address are set only for the primary NIC.
 new_ip_address=$(jq -r .networkInterfaces[0].ip <<< $instance) new_host_name=$(jq -r .hostname <<< $instance) google_set_hostname
 
