@@ -76,10 +76,12 @@ function set_irq_range() {
     ((bind_cores_index++))
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list >&2
+    echo "$core" > "/proc/irq/${tx_irq}/smp_affinity_list"
+    echo "tx_irq: ${tx_irq}, assigned irq core: $(cat "/proc/irq/${tx_irq}/smp_affinity_list")" >&2
 
     # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list >&2
+    echo "$core" > "/proc/irq/${rx_irq}/smp_affinity_list"
+    echo "rx_irq: ${rx_irq}, assigned irq core: $(cat "/proc/irq/${rx_irq}/smp_affinity_list")" >&2
 
     # Check if the queue exists at present because the number of IRQs equals
     # the max number of queues allocated and could be greater than the current
