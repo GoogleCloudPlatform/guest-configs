@@ -77,11 +77,10 @@ function set_irq_range() {
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
     echo "$core" > "/proc/irq/${tx_irq}/smp_affinity_list"
+    echo "tx_irq: ${tx_irq}, assigned irq core: $(cat "/proc/irq/${tx_irq}/smp_affinity_list")" >&2
 
     # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
     echo "$core" > "/proc/irq/${rx_irq}/smp_affinity_list"
-
-    echo "tx_irq: ${tx_irq}, assigned irq core: $(cat "/proc/irq/${tx_irq}/smp_affinity_list")" >&2
     echo "rx_irq: ${rx_irq}, assigned irq core: $(cat "/proc/irq/${rx_irq}/smp_affinity_list")" >&2
 
 
