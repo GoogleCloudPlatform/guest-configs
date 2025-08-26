@@ -76,10 +76,13 @@ function set_irq_range() {
     ((bind_cores_index++))
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$tx_irq"/smp_affinity_list >&2
+    echo "$core" > "/proc/irq/${tx_irq}/smp_affinity_list"
+    echo "tx_irq: ${tx_irq}, assigned irq core: $(cat "/proc/irq/${tx_irq}/smp_affinity_list")" >&2
 
     # this is GVE's RX irq. See gve_rx_idx_to_ntfy().
-    echo "$core" > /proc/irq/"$rx_irq"/smp_affinity_list >&2
+    echo "$core" > "/proc/irq/${rx_irq}/smp_affinity_list"
+    echo "rx_irq: ${rx_irq}, assigned irq core: $(cat "/proc/irq/${rx_irq}/smp_affinity_list")" >&2
+
 
     # Check if the queue exists at present because the number of IRQs equals
     # the max number of queues allocated and could be greater than the current
@@ -207,7 +210,7 @@ function unpack_cpu_ranges() {
 
 # Converts a hexadecimal bitmap to rangelist
 # ex. bitmap=00000000,00000000,00fff000,000003ff CPUs=0-9,44-55
-function bitmapbitmap_to_rangelist() { # bitmap
+function bitmap_to_rangelist() { # bitmap
   local bitmap="${1:-}" # must be non empty, only hex digits and commas
 
   [[ "${bitmap}" =~ ^[0-9a-fA-F,]+$ ]] || return 1
