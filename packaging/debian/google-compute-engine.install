@@ -8,3 +8,4 @@ etc/systemd/resolved.conf.d/*
 lib/udev/rules.d/*
 lib/udev/*
 usr/bin/*
+!trixie/*
