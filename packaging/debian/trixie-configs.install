@@ -1,2 +1,2 @@
-/src/trixie/90_google_kexchange.conf /etc/ssh/sshd_config.d/
-/src/trixie/90_google_serial.conf /etc/systemd/system/rsyslog.service.d/
+trixie/90_google_kexchange.conf /etc/ssh/sshd_config.d/
+trixie/90_google_serial.conf /etc/systemd/system/rsyslog.service.d/
