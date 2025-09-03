@@ -1,7 +1,19 @@
 #!/usr/bin/make -f
 
+DEB_VERSION_CODENAME := $(shell . /etc/os-release; echo $$VERSION_CODENAME)
+
 %:
 	dh $@
 
 override_dh_install:
 	dh_install --sourcedir=src
+
+override_dh_testdir:
+# Remove the gce-config-trixie package when not on Debian 13 so it's not bulit
+# on versions that won't consume it.
+ifeq ($(DEB_VERSION_CODENAME),trixie)
+	dh_testdir
+else
+	sed -i '/^Package: gce-configs-trixie$$/,/^$$/d' debian/control
+	dh_testdir
+endif
