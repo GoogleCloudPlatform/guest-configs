@@ -6,11 +6,16 @@ DEB_VERSION_CODENAME := $(shell . /etc/os-release; echo $$VERSION_CODENAME)
 	dh $@
 
 override_dh_install:
+# Install both packages if Trixie; only build guest-configs if not.
+ifeq ($(DEB_VERSION_CODENAME),trixie)
 	dh_install --sourcedir=src
+else
+	dh_install --sourcedir=src -p google-compute-engine
+endif
 
 override_dh_testdir:
-# Remove the gce-config-trixie package when not on Debian 13 so it's not bulit
-# on versions that won't consume it.
+# Excplicitly include the Trixie config in non-Trixie builds so
+# that it does not create an empty package.
 ifeq ($(DEB_VERSION_CODENAME),trixie)
 	dh_testdir
 else
