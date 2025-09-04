@@ -36,3 +36,13 @@ Replaces: google-compute-engine-jessie,
 Description: Google Compute Engine guest environment.
  This package contains scripts and configuration files for
  features specific to the Google Compute Engine cloud environment.
+
+Package: gce-configs-trixie
+Architecture: all
+Depends: rsyslog
+         ${misc:Depends}
+Recommends: system-log-daemon
+Description: Google Compute Engine guest environment configs for
+ Debian 13 (Trixie). This package contains additional
+ configuration files required for Debian 13 (Trixie) to function
+ as expected in the Google Compute Engine cloud environment.
