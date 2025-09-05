@@ -1,0 +1,3 @@
+trixie/90_google_keyexchange.conf /etc/ssh/sshd_config.d/
+trixie/90_google_serial.conf /etc/systemd/system/rsyslog.service.d/
+trixie/google-keyring.gpg /etc/apt/keyrings/
