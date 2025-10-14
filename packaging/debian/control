@@ -42,6 +42,8 @@ Architecture: all
 Depends: rsyslog
          ${misc:Depends}
 Recommends: system-log-daemon
+Conflicts: google-cloud-packages-archive-keyring
+Replaces: google-cloud-packages-archive-keyring
 Description: Google Compute Engine guest environment configs for
  Debian 13 (Trixie). This package contains additional
  configuration files required for Debian 13 (Trixie) to function
