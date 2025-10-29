@@ -24,17 +24,26 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 # Path to the PCI bus devices
 declare PCI_BUS_PATH='/sys/bus/pci/devices'
 declare SYS_PREPEND_PATH='/sys'
-# 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
-readonly ETHERNET_DEVICES_VENDORS=('15b3:101e' '8086:145c' '8086:1452')
-# 0x10de is the vendor ID for Nvidia
-readonly GPU_DEVICES_VENDORS=('10de' '10de')
+readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
+# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
+readonly IRDMA_DEVICES_VENDORS=('8086:145c')
+# 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
+# 0x15b3:0x1023 is the vendor and device ID for Mellanox CX8
+readonly GPU_NIC_DEVICES_VENDORS=('15b3:101e' '15b3:1023')
+# 0x10de:0x2330 is the vendor and device ID for Nvidia H100 -> A3 (not using this script)
+# 0x10de:0x2335 is the vendor and device ID for Nvidia H200 -> A3U
+# 0x10de:0x2901 is the vendor and device ID for Nvidia B200 -> A4
+# 0x10de:0x2941 is the vendor and device ID for Nvidia GB200 -> A4X
+# 0x10de:0x31c2 is the vendor and device ID for Nvidia GB300 -> A4X Metal
+readonly GPU_DEVICES_VENDORS=('10de:2330' '10de:2335' '10de:2901' '10de:2941' '10de:31c2')
 # PCI BUS ID path is in the format of 0000:00:04.0
 readonly PCI_ID_REGEX='[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+'
 
 # Array of devices by with vendor info
 declare -a ethernet_devices
+declare -a gpu_nic_devices
 declare -a accelerator_devices
 
 # Ratio of Processor to Ethernet devices
@@ -107,16 +116,16 @@ function notice() {
 ###############################
 # Determine the ratio of Processor to Ethernet devices
 # Globals:
-#   ethernet_devices: Array of ethernet devices
-#   accelerator_devices: Array of processor devices
+#   gpu_nic_devices: Array of gpu nic devices
+#   accelerator_devices: Array of accelerator devices
 #   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
 #   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
 # Arguments:
 #   None
 ##############################
 function determine_index_ratios() {
-  ethernet_to_accelerator_ratio="$(( ${#ethernet_devices[@]} / ${#accelerator_devices[@]} ))"
-  accelerator_to_ethernet_ratio="$(( ${#accelerator_devices[@]} / ${#ethernet_devices[@]} ))"
+  ethernet_to_accelerator_ratio="$(( ${#gpu_nic_devices[@]} / ${#accelerator_devices[@]} ))"
+  accelerator_to_ethernet_ratio="$(( ${#accelerator_devices[@]} / ${#gpu_nic_devices[@]} ))"
   debug "ethernet_to_accelerator_ratio: ${ethernet_to_accelerator_ratio}"
   debug "accelerator_to_ethernet_ratio: ${accelerator_to_ethernet_ratio}"
 }
@@ -127,11 +136,13 @@ function determine_index_ratios() {
 # Globals:
 #   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
 #     relevant to intent based naming
+#   GPU_NIC_DEVICES_VENDORS: Array of gpu nic device vendors
+#     relevant to intent based naming
 #   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
 #     naming
 #   ethernet_devices: Array of ethernet devices
+#   gpu_nic_devices: Array of gpu nic devices
 #   accelerator_devices: Array of processor devices
-#   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
 # Arguments:
 #   $1: Name reference to the array of ethernet devices
 #   $2: Name reference to the array of processor devices
@@ -139,7 +150,9 @@ function determine_index_ratios() {
 ###############################
 function list_devices() {
   local -n ethernet_map="$1"
-  local -n accelerator_map="$2"
+  local -n gpu_nic_map="$2"
+  local -n accelerator_map="$3"
+  shift
   shift
   shift
   local paths=("$@")
@@ -159,13 +172,17 @@ function list_devices() {
     if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
       ethernet_map[${int_id}]=${device_id}
     fi
-
-    if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${vendor}[[:space:]] ]]; then
-      accelerator_map[${int_id}]=${vendor}
+    if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
+      gpu_nic_map[${int_id}]=${device_id}
+    fi
+    if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
+      accelerator_map[${int_id}]=${device_id}
     fi
   done
   debug $(printf "Generated ethernet_devices_map: %s %s" "${!ethernet_map[*]}" \
     "${ethernet_map[*]}")
+  debug $(printf "Generated gpu_nic_devices_map: %s %s" "${!gpu_nic_map[*]}" \
+    "${gpu_nic_map[*]}")
   debug $(printf "Generated accelerator_devices_map: %s %s" "${!accelerator_map[*]}" \
     "${accelerator_map[*]}")
 }
@@ -176,7 +193,8 @@ function list_devices() {
 # Runs recursively up device tree starting from DEVPATH
 # Globals:
 #   bus_specific_ethernet_device_map: Array of ethernet devices
-#   bus_specific_accelerator_device_map: Array of processor devices
+#   bus_specific_gpu_nic_device_map: Array of gpu nic devices
+#   bus_specific_accelerator_device_map: Array of accelerator devices
 #   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
 #   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
 # Arguments:
@@ -187,8 +205,10 @@ function gather_lowest_denominator_devices() {
 
   # Clear the arrays
   unset bus_specific_ethernet_device_map
+  unset bus_specific_gpu_nic_device_map
   unset bus_specific_accelerator_device_map
   declare -ga bus_specific_ethernet_device_map
+  declare -ga bus_specific_gpu_nic_device_map
   declare -ga bus_specific_accelerator_device_map
 
   if [[ "${path}" == "" ]]; then
@@ -212,13 +232,12 @@ function gather_lowest_denominator_devices() {
   if [[ ${line_count} -gt 1 ]]; then
     # build array
     # NOTE: Calling in a $() will not modify the array in this instance
-    list_devices bus_specific_ethernet_device_map bus_specific_accelerator_device_map "${output}"
+    list_devices bus_specific_ethernet_device_map bus_specific_gpu_nic_device_map bus_specific_accelerator_device_map "${output}"
 
-    if [[ ${#bus_specific_ethernet_device_map[@]} -ne 0 ]] && [[ ${#bus_specific_accelerator_device_map[@]} -ne 0 ]]; then
+    if [[ ${#bus_specific_gpu_nic_device_map[@]} -ne 0 ]] && [[ ${#bus_specific_accelerator_device_map[@]} -ne 0 ]]; then
 
-
-      local -i eth_to_acc_ratio="$(( ${#bus_specific_ethernet_device_map[@]} / ${#bus_specific_accelerator_device_map[@]} ))"
-      local -i acc_to_eth_ratio="$(( ${#bus_specific_accelerator_device_map[@]} / ${#bus_specific_ethernet_device_map[@]} ))"
+      local -i eth_to_acc_ratio="$(( ${#bus_specific_gpu_nic_device_map[@]} / ${#bus_specific_accelerator_device_map[@]} ))"
+      local -i acc_to_eth_ratio="$(( ${#bus_specific_accelerator_device_map[@]} / ${#bus_specific_gpu_nic_device_map[@]} ))"
 
       if [[ ${eth_to_acc_ratio} -eq ${ethernet_to_accelerator_ratio} ]] || [[ ${acc_to_eth_ratio} -eq ${accelerator_to_ethernet_ratio} ]]; then
         return
@@ -310,7 +329,7 @@ function get_id_from_path() {
 ################################
 # Get the index of the accelerator device based on the ethernet device index
 # Globals:
-#   bus_specific_ethernet_device_map: Array of ethernet devices
+#   bus_specific_gpu_nic_device_map: Array of gpu nic devices
 #   bus_specific_accelerator_device_map: Array of processor devices
 #   ethernet_to_accelerator_ratio: Ratio of Processor to Ethernet devices
 #   accelerator_to_ethernet_ratio: Ratio of Ethernet to Processor devices
@@ -321,7 +340,7 @@ function get_id_from_path() {
 #################################
 function get_accelerator_index() {
   local -i eth_id=${1}
-  local -i eth_index="$(get_index ${eth_id} "${!bus_specific_ethernet_device_map[@]}")"
+  local -i eth_index="$(get_index ${eth_id} "${!bus_specific_gpu_nic_device_map[@]}")"
 
   if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
     local -i gpu_index=$((${eth_index} / ${ethernet_to_accelerator_ratio}))
@@ -343,11 +362,11 @@ function get_accelerator_index() {
 # For the case where there are equal or more ethernet devices than
 # accelerator devices
 # Globals:
-#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#   GPU_NIC_DEVICES_VENDORS: Array of ethernet device vendors
 #     relevant to intent based naming
 #   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
 #     naming
-#   ethernet_devices: Array of ethernet devices
+#   gpu_nic_devices: Array of ethernet devices
 #   accelerator_devices: Array of processor devices
 # Environment Variables:
 #   DEVPATH: Path of the device to name that includes PCI bus id
@@ -367,7 +386,7 @@ function name_ethernet_greater_equal_gpu() {
   # Search for relevant vendors in arrays and generate name based on results
   # Minimum requirement is the vendor of the ethernet device in relevant list
   # Add additional cases here for new hardware vendors or name cases
-  if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
+  if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ \
   [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
     name_builder="rdma$((${rdma_index}))"
   else
@@ -388,11 +407,11 @@ function name_ethernet_greater_equal_gpu() {
 #
 # For the case where there are more accelerator devices than ethernet devices
 # Globals:
-#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#   GPU_NIC_DEVICES_VENDORS: Array of ethernet device vendors
 #     relevant to intent based naming
 #   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
 #     naming
-#   ethernet_devices: Array of ethernet devices
+#   gpu_nic_devices: Array of ethernet devices
 #   accelerator_devices: Array of processor devices
 # Environment Variables:
 #   DEVPATH: Path of the device to name that includes PCI bus id
@@ -413,7 +432,7 @@ function name_gpu_greater_ethernet() {
   # Search for relevant vendors in arrays and generate name based on results
   # Minimum requirement is the vendor of the ethernet device in relevant list
   # Add additional cases here for new hardware vendors or name cases
-  if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
+  if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ \
   [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
     name_builder="rdma$((${rdma_index}))"
   fi
@@ -430,13 +449,106 @@ function name_gpu_greater_ethernet() {
   echo ${name_builder}
 }
 
+function run_ip_cmd() {
+  debug "Running command: ip $@"
+  if [[ "$TEST" != "test" ]]; then
+    ip "$@"
+  fi
+}
+
+#################################
+# Generate the ethernet name of the device based on the vendor
+#
+# Arguments:
+#   $1: Vendor of the ethernet device
+#   $2: Index of the ethernet device in ethernet_devices array
+#   $3: Device path of the ethernet device
+# Outputs:
+#   Name of the device (eth0, eth2, rdma4, etc.)
+#################################
+function generate_ethernet_name() {
+  local int_id=$1
+  local eth_index=$2
+  local device_path=$3
+
+  local eth_device_vendor="${ethernet_devices[${int_id}]}"
+  local name_builder=""
+
+  # Diorite NIC
+  if [[ ${eth_device_vendor} == "8086:1452" ]]; then
+    # Pass the array of keys to find index of this device
+    local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
+    local old_name=$(basename ${device_path})
+    local new_name="eth${eth_index}"
+    name_builder="$new_name"
+
+    # Temporarily rename to avoid naming collisions: udev will overwrite the
+    # temporary name with the correct, final name
+    if [[ "$new_name" != "$old_name" ]]; then # IDPF NIC
+      notice "Renaming ${old_name} to ${new_name}"
+      run_ip_cmd link set $new_name down
+      run_ip_cmd link set $new_name name "${new_name}tmp"
+    fi
+  elif [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${eth_device_vendor}[[:space:]] ]]; then # RDMA NIC
+    if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
+      name_builder="rdma${eth_index}"
+    elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device" ]]; then
+      # If this is a VF device and not an RDMA we do not want this device
+      # to claim the eth0 name so give it a PCI path based name instead.
+      #
+      notice "Non RDMA VF NIC. Setting name to path name"
+	    name_builder=$ID_NET_NAME_PATH
+    else
+      # If device path is empty it indicates other changes happening so this script will skip
+      error_and_exit "DEVPATH provided is empty, skipping naming. Path:${SYS_PREPEND_PATH}${DEVPATH}"
+    fi
+  else
+    error_and_exit "Ethernet device is not for intent based name: "\
+    "Device vendors: eth:${eth_device_vendor}"
+  fi
+
+  echo ${name_builder}
+}
+
+#################################
+# Generate the gpu nic name of the device based on the vendor
+#
+# Arguments:
+#   $1: Vendor of the gpu nic device
+#   $2: Index of the gpu nic device in gpu_nic_devices array
+#   $3: Index of the accelerator device in accelerator_devices array
+# Outputs:
+#   Name of the device (gpu0rdma1, gpu1rdma0, etc.)
+#################################
+function generate_gpu_nic_name() {
+  local int_id=$1
+  local gpu_nic_index=$2
+  local device_path=$3
+
+  local gpu_nic_device_vendor="${gpu_nic_devices[${int_id}]}"
+  local name_builder=""
+
+  if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    local -i gpu_index=$(get_accelerator_index ${int_id})
+    name_builder=$(name_ethernet_greater_equal_gpu "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
+  elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    local -i gpu_index=$(get_accelerator_index ${int_id})
+    name_builder=$(name_gpu_greater_ethernet "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
+  else
+    error_and_exit "No index ratios found"
+  fi
+
+  echo ${name_builder}
+}
+
 ###############################
 # Generate the name of the device based on the vendor
 # Globals:
-#   ETHERNET_DEVICES_VENDORS: Array of ethernet device vendors
+#   GPU_NIC_DEVICES_VENDORS: Array of ethernet device vendors
 #     relevant to intent based naming
-#   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
-#     naming
+#   gpu_nic_devices: Array of gpu nic devices
 #   ethernet_devices: Array of ethernet devices
 #   accelerator_devices: Array of processor devices
 # Arguments:
@@ -448,63 +560,23 @@ function generate_name() {
   local device_path=$1
   local -i int_id=$(get_id_from_path "${device_path}")
   debug "Path discovered int_id: ${int_id}"
+
   # Pass the array of keys to find index of this device
   local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
   debug "ethernet device index: ${eth_index}"
-  if [[ ${eth_index} -eq -1 ]]; then
-    error_and_exit "Device not found in ethernet devices"
+  if [[ ${eth_index} -ne -1 ]]; then
+    echo $(generate_ethernet_name ${int_id} ${eth_index} ${device_path})
+    return
   fi
 
-  local eth_device_vendor="${ethernet_devices[${int_id}]}"
-  local name_builder=""
-
-  # Diorite NIC
-  if [[ ${eth_device_vendor} == "8086:1452" ]]; then
-    local old_name=$(basename ${device_path})
-    local new_name="eth${eth_index}"
-    name_builder="$new_name"
-
-    # Temporarily rename to avoid naming collisions: udev will overwrite the
-    # temporary name with the correct, final name
-    if [[ "$new_name" != "$old_name" ]]; then
-        notice "Renaming ${old_name} to ${new_name}"
-        /sbin/ip link set $new_name down
-        /sbin/ip link set $new_name name "${new_name}tmp"
-        /sbin/ip link set "${new_name}tmp" up
-    fi
-  elif [[ ${accelerator_devices[*]} == "" ]] ; then
-    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ \
-    [[:space:]]${eth_device_vendor}[[:space:]] ]]; then
-      if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
-        name_builder="rdma${eth_index}"
-      elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device" ]]; then
-        # If this is a VF device and not an RDMA we do not want this device
-        # to claim the eth0 name so give it a PCI path based name instead.
-        #
-        notice "Non RDMA VF NIC. Setting name to path name"
-	      name_builder=$ID_NET_NAME_PATH
-      else
-        # If device path is empty it indicates other changes happening so this script will skip
-        error_and_exit "DEVPATH provided is empty, skipping naming. Path:${SYS_PREPEND_PATH}${DEVPATH}"
-      fi
-    else
-      error_and_exit "Device is not for intent based name: "\
-      "Device vendors: eth:${eth_device_vendor}"
-    fi
-  elif [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
-    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
-    local -i gpu_index=$(get_accelerator_index ${int_id})
-    name_builder=$(name_ethernet_greater_equal_gpu "${eth_device_vendor}" ${eth_index} ${gpu_index})
-  elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
-    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
-    local -i gpu_index=$(get_accelerator_index ${int_id})
-    name_builder=$(name_gpu_greater_ethernet "${eth_device_vendor}" ${eth_index} ${gpu_index})
-  else
-    error_and_exit "No index ratios found"
+  local -i gpu_nic_index=$(get_index ${int_id} "${!gpu_nic_devices[@]}")
+  debug "gpu_nic device index: ${gpu_nic_index}"
+  if [[ ${gpu_nic_index} -ne -1 ]]; then
+    echo $(generate_gpu_nic_name ${int_id} ${gpu_nic_index} ${device_path})
+    return
   fi
 
-  notice "Device name: ${name_builder}"
-  echo ${name_builder}
+  error_and_exit "Device is not for intent based name: ${device_path}"
 }
 
 # Intel VF driver and needs special handling to determine if name should be
@@ -520,10 +592,10 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     notice "Triggered for non Net Device"
   fi
   # Note can not use "" around ls path here or it errors out
-  list_devices ethernet_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
+  list_devices ethernet_devices gpu_nic_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
 
     # Check if any devices were found
-  if [[ "${ethernet_devices[*]}" == "" ]]; then
+  if [[ "${gpu_nic_devices[*]}" == "" || "${ethernet_devices[*]}" == "" ]]; then
     error_and_exit "No network devices found"
   fi
 
@@ -542,9 +614,9 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
       notice "Renaming iface ${current_net_iface} to ${generated_name}"
-      /usr/sbin/ip link set dev ${current_net_iface} down
-      /usr/sbin/ip link set dev ${current_net_iface} name ${generated_name}
-      /usr/sbin/ip link set dev ${generated_name} up
+      run_ip_cmd link set dev ${current_net_iface} down
+      run_ip_cmd link set dev ${current_net_iface} name ${generated_name}
+      run_ip_cmd link set dev ${generated_name} up
     fi
   fi
 fi
