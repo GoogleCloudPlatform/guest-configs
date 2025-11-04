@@ -132,7 +132,8 @@ function is_multinic_accelerator_platform() {
   || "$machine_type" == *"a3-edgegpu-8g"* \
   || "$machine_type" == *"a3-ultragpu-"* \
   || "$machine_type" == *"a4-highgpu-"* \
-  || "$machine_type" == *"a4x-highgpu-"* ]] || return 1
+  || "$machine_type" == *"a4x-highgpu-"* \
+  || "$machine_type" == *"a4x-maxgpu-"* ]] || return 1
   return 0
 }
 
