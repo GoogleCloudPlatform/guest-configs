@@ -486,7 +486,6 @@ function generate_ethernet_name() {
     # temporary name with the correct, final name
     if [[ "$new_name" != "$old_name" ]]; then # IDPF NIC
       notice "Renaming ${old_name} to ${new_name}"
-      run_ip_cmd link set $new_name down
       run_ip_cmd link set $new_name name "${new_name}tmp"
     fi
   elif [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${eth_device_vendor}[[:space:]] ]]; then # RDMA NIC
@@ -507,6 +506,7 @@ function generate_ethernet_name() {
     "Device vendors: eth:${eth_device_vendor}"
   fi
 
+  notice "eth nic name: ${name_builder} for device_path: ${device_path}"
   echo ${name_builder}
 }
 
@@ -540,6 +540,7 @@ function generate_gpu_nic_name() {
     error_and_exit "No index ratios found"
   fi
 
+  notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
   echo ${name_builder}
 }
 
@@ -614,9 +615,7 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
       notice "Renaming iface ${current_net_iface} to ${generated_name}"
-      run_ip_cmd link set dev ${current_net_iface} down
       run_ip_cmd link set dev ${current_net_iface} name ${generated_name}
-      run_ip_cmd link set dev ${generated_name} up
     fi
   fi
 fi
