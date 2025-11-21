@@ -489,9 +489,9 @@ function generate_ethernet_name() {
       run_ip_cmd link set $new_name name "${new_name}tmp"
     fi
   elif [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${eth_device_vendor}[[:space:]] ]]; then # RDMA NIC
-    if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device/${RDMA_TEST_FOLDER}" ]]; then
+    if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${device_path}/device/${RDMA_TEST_FOLDER}" ]]; then
       name_builder="rdma${eth_index}"
-    elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${SYS_PREPEND_PATH}${DEVPATH}/device" ]]; then
+    elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${device_path}/device" ]]; then
       # If this is a VF device and not an RDMA we do not want this device
       # to claim the eth0 name so give it a PCI path based name instead.
       #
@@ -499,7 +499,7 @@ function generate_ethernet_name() {
 	    name_builder=$ID_NET_NAME_PATH
     else
       # If device path is empty it indicates other changes happening so this script will skip
-      error_and_exit "DEVPATH provided is empty, skipping naming. Path:${SYS_PREPEND_PATH}${DEVPATH}"
+      error_and_exit "DEVPATH provided is empty, skipping naming. Path:${device_path}"
     fi
   else
     error_and_exit "Ethernet device is not for intent based name: "\
@@ -529,11 +529,11 @@ function generate_gpu_nic_name() {
   local name_builder=""
 
   if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
-    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    gather_lowest_denominator_devices "${device_path}"
     local -i gpu_index=$(get_accelerator_index ${int_id})
     name_builder=$(name_ethernet_greater_equal_gpu "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
   elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
-    gather_lowest_denominator_devices "${SYS_PREPEND_PATH}${DEVPATH}"
+    gather_lowest_denominator_devices "${device_path}"
     local -i gpu_index=$(get_accelerator_index ${int_id})
     name_builder=$(name_gpu_greater_ethernet "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
   else
@@ -596,7 +596,7 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
   list_devices ethernet_devices gpu_nic_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
 
     # Check if any devices were found
-  if [[ "${gpu_nic_devices[*]}" == "" || "${ethernet_devices[*]}" == "" ]]; then
+  if [[ "${gpu_nic_devices[*]}" == "" && "${ethernet_devices[*]}" == "" ]]; then
     error_and_exit "No network devices found"
   fi
 
@@ -604,7 +604,7 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
       determine_index_ratios
   fi
 
-  generated_name=$(generate_name "${DEVPATH}")
+  generated_name=$(generate_name "${SYS_PREPEND_PATH}${DEVPATH}")
 
   if [[ "$SUBSYSTEM" == "net" ]]; then
     echo ${generated_name}
