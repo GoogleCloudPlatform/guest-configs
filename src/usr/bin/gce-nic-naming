@@ -173,6 +173,14 @@ function list_devices() {
       ethernet_map[${int_id}]=${device_id}
     fi
     if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
+      local physfn_path="${pci_device}/physfn"
+      # Skip CX VF in baremetal; workaround to avoid pci topology change causes
+      # nic name inconsistency.
+      # note: CX-7 VF in VM doesn't have physfn, so it is not impacted.
+      if [[ -d "${physfn_path}" ]]; then
+        continue
+      fi
+
       gpu_nic_map[${int_id}]=${device_id}
     fi
     if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
@@ -516,9 +524,10 @@ function generate_ethernet_name() {
 # Arguments:
 #   $1: Vendor of the gpu nic device
 #   $2: Index of the gpu nic device in gpu_nic_devices array
-#   $3: Index of the accelerator device in accelerator_devices array
+#   $3: Device path of the gpu nic device
 # Outputs:
 #   Name of the device (gpu0rdma1, gpu1rdma0, etc.)
+#   In case of CX VF representation it will return (gpu0rdma2_rep, etc.)
 #################################
 function generate_gpu_nic_name() {
   local int_id=$1
@@ -528,17 +537,69 @@ function generate_gpu_nic_name() {
   local gpu_nic_device_vendor="${gpu_nic_devices[${int_id}]}"
   local name_builder=""
 
+  local -i gpu_index=-1
   if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
     gather_lowest_denominator_devices "${device_path}"
-    local -i gpu_index=$(get_accelerator_index ${int_id})
+    gpu_index=$(get_accelerator_index ${int_id})
     name_builder=$(name_ethernet_greater_equal_gpu "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
   elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
     gather_lowest_denominator_devices "${device_path}"
-    local -i gpu_index=$(get_accelerator_index ${int_id})
+    gpu_index=$(get_accelerator_index ${int_id})
     name_builder=$(name_gpu_greater_ethernet "${gpu_nic_device_vendor}" ${gpu_nic_index} ${gpu_index})
   else
     error_and_exit "No index ratios found"
   fi
+
+  # Handle CX VF representation
+  local phys_port_name=$(cat "${device_path}/phys_port_name" 2>/dev/null)
+  if [[ "${phys_port_name}" == *"vf"* ]]; then
+    local -i vf_index=${phys_port_name##*vf}
+    local -i eth_index=$(( vf_index + 2 )) # slot 0&1 are PF, VF starts at 2
+    name_builder="gpu${gpu_index}rdma${eth_index}_rep"
+  fi
+
+  notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
+  echo ${name_builder}
+}
+
+#################################
+# Generate the gpu nic name for the VF device based on the vendor
+#
+# Arguments:
+#   $1: Vendor of the gpu nic device
+#   $2: Device path of the gpu nic VF device
+#   $3: Device path of the gpu nic PF device
+# Outputs:
+#   Name of the device (gpu0rdma2, gpu1rdma3, etc.)
+#################################
+function generate_gpu_nic_name_has_physfn() {
+  local -i int_id=$1
+  local vf_path=$2
+  local physfn_path=$3
+  local -i physfn_int_id=$(get_id_from_path "${physfn_path}")
+
+  local vf_vendor=$(cat "${vf_path}/device/vendor")
+  local vf_device=$(cat "${vf_path}/device/device")
+  local vf_device_id="${vf_vendor#0x}:${vf_device#0x}"
+  if [[ ! " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${vf_device_id}[[:space:]] ]]; then
+    error_and_exit "VF device is not for intent based name: ${path}"
+  fi
+
+  # Get the index of the accelerator device based on the NIC pf device index
+  local -i gpu_index=-1
+  if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${physfn_path}"
+    gpu_index=$(get_accelerator_index ${physfn_int_id})
+  elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
+    gather_lowest_denominator_devices "${physfn_path}"
+    gpu_index=$(get_accelerator_index ${physfn_int_id})
+  else
+    error_and_exit "No index ratios found"
+  fi
+
+  # using the slot number of the VF as the rdma index
+  local -i rdma_index=$(( int_id % 16 ))
+  name_builder="gpu${gpu_index}rdma${rdma_index}"
 
   notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
   echo ${name_builder}
@@ -574,6 +635,14 @@ function generate_name() {
   debug "gpu_nic device index: ${gpu_nic_index}"
   if [[ ${gpu_nic_index} -ne -1 ]]; then
     echo $(generate_gpu_nic_name ${int_id} ${gpu_nic_index} ${device_path})
+    return
+  fi
+
+  # If device is not in ethernet_devices or gpu_nic_devices, check if it is a
+  # CX VF in baremetal.
+  local physfn_path=$(readlink -f "${device_path}/device/physfn")
+  if [[ -d "${physfn_path}" ]]; then
+    echo $(generate_gpu_nic_name_has_physfn ${int_id} ${device_path} ${physfn_path})
     return
   fi
 
