@@ -46,6 +46,10 @@ if [[ ! -z "${GOOGLE_SET_MULTIQUEUE_FAKEROOT+x}" ]]; then
   ROOT_DIR="$GOOGLE_SET_MULTIQUEUE_FAKEROOT"
 fi
 
+A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
+A4X_RX_RING_LENGTH="2048"
+A4X_TX_RING_LENGTH="1024"
+
 function is_decimal_int() {
   [ "${1}" -eq "${1}" ] > /dev/null 2>&1
 }
@@ -54,7 +58,7 @@ function set_channels() {
   ethtool -L "${1}" combined "${2}" > /dev/null 2>&1
 }
 
-function set_irq_range() {
+function set_irq_range_idpf() {
   local -r nic="$1"
   local bind_cores_index="$2"
   local irq_ranges=("${@:3}")
@@ -65,6 +69,36 @@ function set_irq_range() {
     return;
   fi
 
+  # More IRQs are in msi_irqs than actually exist for idpf.
+  local alleged_irqs=($(ls ${ROOT_DIR}sys/class/net/"$nic"/device/msi_irqs))
+  local -a actual_irqs=()
+  for irq in "${alleged_irqs[@]}"; do
+    if [[ -d "${ROOT_DIR}proc/irq/${irq}" ]]; then
+      # Only reaffinitize TxRx irqs, not the Mailbox.
+      if ls ${ROOT_DIR}proc/irq/${irq}/*TxRx* 1> /dev/null 2>&1; then
+        actual_irqs+=("${irq}")
+      fi
+    fi
+  done
+  local num_irqs=${#actual_irqs[@]}
+  for ((i=0; i<num_irqs; i+=1)); do
+    core="${irq_ranges[${bind_cores_index}]}"
+    echo "Setting irq binding for "$nic" to core ${actual_irqs[$i]} to "${core} >&2
+    echo "${core}" > "${ROOT_DIR}proc/irq/${actual_irqs[$i]}/smp_affinity_list"
+    bind_cores_index=$((bind_cores_index + 1))
+  done
+}
+
+function set_irq_range_gve() {
+  local -r nic="$1"
+  local bind_cores_index="$2"
+  local irq_ranges=("${@:3}")
+
+  # The user may not have this $nic configured on their VM, if not, just skip
+  # it, no need to error out.
+  if [ ! -d "${ROOT_DIR}sys/class/net/"$nic"/device" ]; then
+    return;
+  fi
 
   # We count the number of rx queues and assume number of rx queues == tx
   # queues. The number of queues shown in the sysfs stands for the initial
@@ -151,10 +185,20 @@ function is_multinic_accelerator_platform() {
 # returns 0 (success) if the supplied nic is a Gvnic device.
 function is_gvnic() {
   local -r nic_name="$1"
-  driver_type=$(ethtool -i $nic_name | grep driver)
+  local -r driver_type=$(ethtool -i $nic_name | grep driver)
 
   [[ "$driver_type" == *"gve"* 
   || "$driver_type" == *"gvnic"* ]] || return 1
+
+  return 0
+}
+
+# returns 0 (success) if the supplied nic is an IDPF device.
+function is_idpf() {
+  local -r nic_name="$1"
+  local -r driver_type=$(ethtool -i $nic_name | grep driver)
+
+  [[ "$driver_type" == *"idpf"* ]] || return 1
 
   return 0
 }
@@ -334,7 +378,12 @@ function set_xps_affinity() {
 
       # remove the last ","
       xps_cpus="${xps_cpus%,}"
-      cpu_mask=$(rangelist_to_bitmap $xps_cpus $(nproc))
+      if [[ "$machine_type" == *"a4x-"* ]]; then
+        # Don't use XPS for a4x family machines yet.
+        cpu_mask="${A4X_ALL_CPUS_MASK}"
+      else
+        cpu_mask=$(rangelist_to_bitmap $xps_cpus $(nproc))
+      fi
       echo ${cpu_mask} > $xps_path
       printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" \
         "$queue" \
@@ -490,39 +539,42 @@ unpack_cpu_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
 
 echo -e "\nSetting IRQ affinity with vCPUs on NUMA0 [${numa0_irq_ranges[@]}]"
 bind_cores_index=0
-find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep 'sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
-    continue
-  fi
-
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
-
+find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 0 ]]; then
     continue
   fi
 
-  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
+  # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
+  if is_gvnic "$nic_name"; then
+    bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
+  elif is_idpf "$nic_name"; then
+    bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
+    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
+      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+    fi
+  else
+    echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
+  fi
 done
 
 echo -e "\nSetting IRQ affinity with vCPUs on NUMA1 [${numa1_irq_ranges[@]}]"
 bind_cores_index=0
-find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep 'sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  # For non-gvnic devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if ! is_gvnic "$nic_name"; then
-    echo "$nic_name is not gvnic device, skipping set irq on this device"
-    continue
-  fi
-
-  echo "$nic_name is Gvnic device, continuing set IRQ on $nic_name."
-
+find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
   nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
   if [[ $nic_numa_node -ne 1 ]]; then
     continue
   fi
 
-  bind_cores_index=$(set_irq_range "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
+  # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
+  if is_gvnic "$nic_name"; then
+    bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
+  elif is_idpf "$nic_name"; then
+    bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
+    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
+      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+    fi
+  else
+    echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
+  fi
 done
-  
