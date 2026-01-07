@@ -28,11 +28,11 @@
 # each CPU a dedicated TX and RX network queue, while ensuring that all packets
 # from a single flow are delivered to the same CPU.
 #
-# For a gvnic device, set the IRQ affinities to the per-IRQ affinity hint. 
-# The google virtual ethernet driver maps each queue MSI-X interrupt to a 
-# unique single CPU, which is stored in the affinity_hint for each MSI-X 
-# vector. In older versions of the kernel, irqblanace is expected to copy the 
-# affinity_hint to smp_affinity; however, GCE instances disable irqbalance by 
+# For a gvnic device, set the IRQ affinities to the per-IRQ affinity hint.
+# The google virtual ethernet driver maps each queue MSI-X interrupt to a
+# unique single CPU, which is stored in the affinity_hint for each MSI-X
+# vector. In older versions of the kernel, irqblanace is expected to copy the
+# affinity_hint to smp_affinity; however, GCE instances disable irqbalance by
 # default. This script copies over the affinity_hint to smp_affinity on boot to
 # replicate the behavior of irqbalance.
 
@@ -45,6 +45,11 @@ fi
 if [[ ! -z "${GOOGLE_SET_MULTIQUEUE_FAKEROOT+x}" ]]; then
   ROOT_DIR="$GOOGLE_SET_MULTIQUEUE_FAKEROOT"
 fi
+
+function get_metadata() {
+  local path="$1"
+  curl -s -m 1 -H "Metadata-Flavor: Google" "http://${METADATA_SERVER}/computeMetadata/v1/${path}"
+}
 
 A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
 A4X_RX_RING_LENGTH="2048"
@@ -127,7 +132,6 @@ function set_irq_range_gve() {
     echo "$core" > "${ROOT_DIR}proc/irq/${rx_irq}/smp_affinity_list"
     echo "rx_irq: ${rx_irq}, assigned irq core: $(cat "${ROOT_DIR}proc/irq/${rx_irq}/smp_affinity_list")" >&2
 
-
     # Check if the queue exists at present because the number of IRQs equals
     # the max number of queues allocated and could be greater than the current
     # number of queues.
@@ -146,17 +150,17 @@ function set_irq_range_gve() {
 
 # returns 0 (success) if the all the interfaces contains pnic_id on the Metadats server.
 function contains_pnic_ids() {
-  while IFS= read -r interface; do
+  local interfaces=$(get_metadata "instance/network-interfaces/")
+  for interface in $interfaces; do
     echo "Interface: $interface"
 
-    network_interfaces_mds_attributes=$(curl -m 1 -H "Metadata-Flavor: Google" \
-      "http://${METADATA_SERVER}/computeMetadata/v1/instance/network-interfaces/$interface/")
+    network_interfaces_mds_attributes=$(get_metadata "instance/network-interfaces/$interface/")
 
     if ! echo "$network_interfaces_mds_attributes" | grep -q "physical-nic-id"; then
       echo "physical-nic-id NOT found in interface $interface"
       return 1
     fi
-  done < <(curl -m 1 -H "Metadata-Flavor: Google" http://${METADATA_SERVER}/computeMetadata/v1/instance/network-interfaces/)
+  done
 
   return 0
 }
@@ -165,9 +169,6 @@ function contains_pnic_ids() {
 function is_multinic_accelerator_platform() {
   contains_pnic_ids
   CONTAINS_PNIC_IDS=$?
-
-  machine_type=$(curl -m 1 -H "Metadata-Flavor: Google" \
-    http://${METADATA_SERVER}/computeMetadata/v1/instance/machine-type)
 
   [[ $CONTAINS_PNIC_IDS -eq 0 \
   || "$machine_type" == *"a3-highgpu-8g"* \
@@ -181,13 +182,12 @@ function is_multinic_accelerator_platform() {
   return 0
 }
 
-
 # returns 0 (success) if the supplied nic is a Gvnic device.
 function is_gvnic() {
   local -r nic_name="$1"
   local -r driver_type=$(ethtool -i $nic_name | grep driver)
 
-  [[ "$driver_type" == *"gve"* 
+  [[ "$driver_type" == *"gve"*
   || "$driver_type" == *"gvnic"* ]] || return 1
 
   return 0
@@ -203,51 +203,22 @@ function is_idpf() {
   return 0
 }
 
-# Returns the vCPU ranges on each of the numa nodes. The vCPU ranges will
-# be in the form of array of
-# [numa0_irq_start_1, numa0_irq_end_1, numa0_irq_start_2, numa0_irq_end_2,
-# numa1_irq_start_1, numa1_irq_end_1, numa1_irq_start_2, numa1_irq_end_2]
-# this will only return the vCPU ranges on NUMA0 and NUMA1 since accelerator
-# platforms of GEN3 and after only have 2 NUMA nodes.
-# The expected vCPU ranges on eahc platforms are:
-# A3/A3-mega: 
-# numa0: [0, 51] [104, 155]
-# numa1: [52, 103] [156, 207]
-# A3-ultra:
-# numa0: [0, 55] [113, 168]
-# numa1: [56, 112] [169, 224]
-function get_vcpu_ranges_on_accelerator_platform {
-  declare -n arr_ref=$1
-
-  # Get vCPU ranges for NUMA 0
-  numa0_irq_range=($(cat ${ROOT_DIR}sys/devices/system/node/node0/cpulist))
-  numa0_irq_range0="${numa0_irq_range[0]%,*}"
-  numa0_irq_range1="${numa0_irq_range[0]#*,}"
-
-  numa0_irq_range0_start=$(echo "$numa0_irq_range0" | cut -d '-' -f 1)
-  numa0_irq_range0_end=$(echo "$numa0_irq_range0" | cut -d '-' -f 2)
-  numa0_irq_range1_start=$(echo "$numa0_irq_range1" | cut -d '-' -f 1)
-  numa0_irq_range1_end=$(echo "$numa0_irq_range1" | cut -d '-' -f 2)
-
-  # Get vCPU ranges for NUMA 1
-  numa1_irq_range=($(cat ${ROOT_DIR}sys/devices/system/node/node1/cpulist))
-  numa1_irq_range0="${numa1_irq_range[0]%,*}"
-  numa1_irq_range1="${numa1_irq_range[0]#*,}"
-
-  numa1_irq_range0_start=$(echo "$numa1_irq_range0" | cut -d '-' -f 1)
-  numa1_irq_range0_end=$(echo "$numa1_irq_range0" | cut -d '-' -f 2)
-  numa1_irq_range1_start=$(echo "$numa1_irq_range1" | cut -d '-' -f 1)
-  numa1_irq_range1_end=$(echo "$numa1_irq_range1" | cut -d '-' -f 2)
-
-  arr_ref=(
-  "$numa0_irq_range0_start"
-  "$numa0_irq_range0_end"
-  "$numa0_irq_range1_start"
-  "$numa0_irq_range1_end"
-  "$numa1_irq_range0_start"
-  "$numa1_irq_range0_end"
-  "$numa1_irq_range1_start"
-  "$numa1_irq_range1_end")
+# Returns the CPU ranges for a given NUMA node.
+# The CPU ranges will be returned as a space-separated list of start/end integers.
+function get_vcpu_ranges {
+  local numa_node="$1"
+  local cpulist_file="${ROOT_DIR}sys/devices/system/node/node${numa_node}/cpulist"
+  if [ -f "$cpulist_file" ]; then
+    local cpulist=$(cat "$cpulist_file" | tr ',' ' ')
+    local result=""
+    for r in $cpulist; do
+      local start=$(echo "$r" | cut -d '-' -f 1)
+      local end=$(echo "$r" | cut -d '-' -f 2)
+      [[ -z "$end" ]] && end=$start
+      result+="$start $end "
+    done
+    echo "$result"
+  fi
 }
 
 function unpack_cpu_ranges() {
@@ -345,56 +316,74 @@ function set_xps_affinity() {
   local cpus=("${@:2}")
 
   total_vcpus=${#cpus[@]}
-  num_numa_nodes=2
   nics_string=$(get_network_interfaces)
 
   IFS=' ' read -r -a nics <<< "$nics_string"
   for nic in "${nics[@]}"; do
     tx_queue_count=$(ls -1 ${ROOT_DIR}sys/class/net/"$nic"/queues/ | grep tx | wc -l)
 
-    # the number of queues to assign CPUs for this NUMA node.
-    queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
-
-    # the number of CPUs to assign per queue
-    cpus_per_queue=$(( total_vcpus / queues_per_numa))
-
-    echo "nic=$nic tx_queue_count=$tx_queue_count queues_per_numa=$queues_per_numa cpus_per_queue=$cpus_per_queue"
-
-    cpu_index=0
-    queue_offset=$(( queues_per_numa*numa ))
-    for (( queue=queue_offset; queue<queue_offset+queues_per_numa; queue+=1 )); do
-      xps_path=${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus
-      xps_cpus=""
-
-      # Assign all the remaining CPUs to the last queue
-      if [[ queue -eq $(( queue_offset + queues_per_numa - 1 )) ]]; then
-        cpus_per_queue=$(( total_vcpus - cpu_index ))
-      fi 
-
-      for (( i=0; i<cpus_per_queue; i+=1 )); do
-        xps_cpus+="${cpus[cpu_index]},"
-        cpu_index=$(( cpu_index + 1 ))
+    if [[ "$machine_type" == *"a4x-"* ]]; then
+      # All queues on a4x get the full mask.
+      for (( queue=0; queue<tx_queue_count; queue++ )); do
+        echo "${A4X_ALL_CPUS_MASK}" > "${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus"
       done
+      continue
+    fi
 
-      # remove the last ","
-      xps_cpus="${xps_cpus%,}"
-      if [[ "$machine_type" == *"a4x-"* ]]; then
-        # Don't use XPS for a4x family machines yet.
-        cpu_mask="${A4X_ALL_CPUS_MASK}"
-      else
-        cpu_mask=$(rangelist_to_bitmap $xps_cpus $(nproc))
-      fi
+    if [[ $num_numa_nodes -le $tx_queue_count ]]; then
+      # the number of queues to assign CPUs for this NUMA node.
+      queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
+
+      # the number of CPUs to assign per queue
+      cpus_per_queue=$(( total_vcpus / queues_per_numa))
+
+      echo "nic=$nic tx_queue_count=$tx_queue_count queues_per_numa=$queues_per_numa cpus_per_queue=$cpus_per_queue"
+
+      cpu_index=0
+      queue_offset=$(( queues_per_numa*numa ))
+      for (( queue=queue_offset; queue<queue_offset+queues_per_numa; queue+=1 )); do
+        xps_path=${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus
+        xps_cpus=""
+
+        # Assign all the remaining CPUs to the last queue
+        if [[ queue -eq $(( queue_offset + queues_per_numa - 1 )) ]]; then
+          cpus_per_queue=$(( total_vcpus - cpu_index ))
+        fi
+
+        for (( i=0; i<cpus_per_queue; i+=1 )); do
+          xps_cpus+="${cpus[cpu_index]},"
+          cpu_index=$(( cpu_index + 1 ))
+        done
+
+        # remove the last ","
+        xps_cpus="${xps_cpus%,}"
+        cpu_mask=$(rangelist_to_bitmap "$xps_cpus" "$(nproc)")
+        echo ${cpu_mask} > $xps_path
+      done
+    else
+      # num_numa_nodes > tx_queue_count.
+      # multiple NUMA nodes share a queue. We append to the mask.
+      queue=$(( numa % tx_queue_count ))
+      xps_path=${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus
+
+      current_mask=$(cat "$xps_path" 2>/dev/null || echo "0")
+      current_rangelist=$(bitmap_to_rangelist "$current_mask" 2>/dev/null || echo "")
+
+      # Flatten cpus array to comma-separated list
+      new_cpus_list=$(IFS=,; echo "${cpus[*]}")
+      ranges="${current_rangelist},${new_cpus_list}"
+      ranges="${ranges#,}"
+
+      cpu_mask=$(rangelist_to_bitmap "$ranges" "$(nproc)")
       echo ${cpu_mask} > $xps_path
-      printf "Queue %d XPS_PATH=%s assigned CPUs=%s cpu_mask=%s\n" \
-        "$queue" \
-        "$xps_path" \
-        "$(bitmap_to_rangelist "$cpu_mask")" \
-        "$cpu_mask"
-    done 
+    fi
   done
 }
 
 echo "Running $(basename $0)."
+machine_type=$(get_metadata "instance/machine-type")
+echo "Machine type: $machine_type"
+
 VIRTIO_NET_DEVS=${ROOT_DIR}sys/bus/virtio/drivers/virtio_net/virtio*
 is_multinic_accelerator_platform
 IS_MULTINIC_ACCELERATOR_PLATFORM=$?
@@ -479,102 +468,55 @@ for i in ${ROOT_DIR}proc/irq/*; do
   fi
 done
 
-vcpu_ranges=()
-get_vcpu_ranges_on_accelerator_platform vcpu_ranges
+num_numa_nodes=$(ls -d ${ROOT_DIR}sys/devices/system/node/node* | wc -l)
+echo "Found ${num_numa_nodes} NUMA nodes."
 
-packed_numa0_vcpu_ranges=(
-  "${vcpu_ranges[0]} ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
-)
-packed_numa1_vcpu_ranges=(
-  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
-)
-declare -a numa0_vcpu_ranges
-unpack_cpu_ranges "${packed_numa0_vcpu_ranges[0]}" numa0_vcpu_ranges
-declare -a numa1_vcpu_ranges
-unpack_cpu_ranges "${packed_numa1_vcpu_ranges[0]}" numa1_vcpu_ranges
+for ((node=0; node<num_numa_nodes; node++)); do
+  ranges=$(get_vcpu_ranges "$node")
+  dec_ranges=()
+  unpack_cpu_ranges "${ranges}" dec_ranges
 
-echo -e "\nConfiguring XPS affinity for devices on NUMA 0"
-echo -e "vCPUs on NUMA0 [${vcpu_ranges[0]}-${vcpu_ranges[1]}], [${vcpu_ranges[2]}-${vcpu_ranges[3]}]"
-set_xps_affinity 0 "${numa0_vcpu_ranges[@]}"
-
-echo -e "\nConfiguring XPS affinity for devices on NUMA 1"
-echo -e "vCPUs on NUMA1 [${vcpu_ranges[4]}-${vcpu_ranges[5]}], [${vcpu_ranges[6]}-${vcpu_ranges[7]}]"
-set_xps_affinity 1 "${numa1_vcpu_ranges[@]}"
+  echo -e "\nConfiguring XPS affinity for devices on NUMA ${node}"
+  echo -e "vCPUs on NUMA${node} [${dec_ranges[@]}]"
+  set_xps_affinity "$node" "${dec_ranges[@]}"
+done
 
 if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
   exit
 fi
 
-
 # Assign IRQ binding for network interfaces based on pci bus ordering.
-# 
-# Below logics explains how we rank interfaces by pci bus order.
-# > find /sys/class/net -type l | xargs -L 1 realpath | sort
-# /sys/devices/pci0000:00/0000:00:0b.0/net/enp0s11
-# /sys/devices/pci0000:01/0000:01:00.0/0000:02:00.0/0000:03:02.0/0000:06:00.0/net/enp6s0
-# /sys/devices/pci0000:07/0000:07:00.0/0000:08:00.0/0000:09:02.0/0000:0c:00.0/net/enp12s0
-# /sys/devices/pci0000:81/0000:81:00.0/0000:82:00.0/0000:83:02.0/0000:86:00.0/net/enp134s0
-# /sys/devices/pci0000:87/0000:87:00.0/0000:88:00.0/0000:89:02.0/0000:8c:00.0/net/enp140s0
-# /sys/devices/virtual/net/lo
-#
-# > find /sys/class/net -type l | xargs -L 1 realpath | sort | xargs -L 1 basename | grep -v lo
-# enp0s11
-# enp6s0
-# enp12s0
-# enp134s0
-# enp140s0
-
 # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
 # used by the system.
-packed_numa0_irq_ranges=(
-  "$((vcpu_ranges[0] + 1)) ${vcpu_ranges[1]} ${vcpu_ranges[2]} ${vcpu_ranges[3]}"
-)
-packed_numa1_irq_ranges=(
-  "${vcpu_ranges[4]} ${vcpu_ranges[5]} ${vcpu_ranges[6]} ${vcpu_ranges[7]}"
-)
-declare -a numa0_irq_ranges
-unpack_cpu_ranges "${packed_numa0_irq_ranges[0]}" numa0_irq_ranges
-declare -a numa1_irq_ranges
-unpack_cpu_ranges "${packed_numa1_irq_ranges[0]}" numa1_irq_ranges
+for ((node=0; node<num_numa_nodes; node++)); do
+  ranges=$(get_vcpu_ranges "$node")
 
-echo -e "\nSetting IRQ affinity with vCPUs on NUMA0 [${numa0_irq_ranges[@]}]"
-bind_cores_index=0
-find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
-  if [[ $nic_numa_node -ne 0 ]]; then
-    continue
+  declare -a node_irq_ranges=()
+  unpack_cpu_ranges "${ranges}" node_irq_ranges
+
+  if [[ $node -eq 0 ]]; then
+    # Skip vCPU 0
+    node_irq_ranges=("${node_irq_ranges[@]:1}")
   fi
 
-  # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if is_gvnic "$nic_name"; then
-    bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
-  elif is_idpf "$nic_name"; then
-    bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${numa0_irq_ranges[@]}")
-    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
-      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+  echo -e "\nSetting IRQ affinity with vCPUs on NUMA${node} [${node_irq_ranges[@]}]"
+  bind_cores_index=0
+  find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
+    nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
+    if [[ $nic_numa_node -ne $node ]]; then
+      continue
     fi
-  else
-    echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
-  fi
-done
 
-echo -e "\nSetting IRQ affinity with vCPUs on NUMA1 [${numa1_irq_ranges[@]}]"
-bind_cores_index=0
-find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
-  nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
-  if [[ $nic_numa_node -ne 1 ]]; then
-    continue
-  fi
-
-  # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-  if is_gvnic "$nic_name"; then
-    bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
-  elif is_idpf "$nic_name"; then
-    bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${numa1_irq_ranges[@]}")
-    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
-      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+    # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
+    if is_gvnic "$nic_name"; then
+      bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
+    elif is_idpf "$nic_name"; then
+      bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
+      if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
+        ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+      fi
+    else
+      echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
     fi
-  else
-    echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
-  fi
+  done
 done
