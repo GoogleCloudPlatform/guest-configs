@@ -469,6 +469,10 @@ for i in ${ROOT_DIR}proc/irq/*; do
   fi
 done
 
+if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
+  exit
+fi
+
 num_numa_nodes=$(ls -d ${ROOT_DIR}sys/devices/system/node/node* | wc -l)
 echo "Found ${num_numa_nodes} NUMA nodes."
 
@@ -481,10 +485,6 @@ for ((node=0; node<num_numa_nodes; node++)); do
   echo -e "vCPUs on NUMA${node} [${dec_ranges[@]}]"
   set_xps_affinity "$node" "${dec_ranges[@]}"
 done
-
-if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
-  exit
-fi
 
 # Assign IRQ binding for network interfaces based on pci bus ordering.
 # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
