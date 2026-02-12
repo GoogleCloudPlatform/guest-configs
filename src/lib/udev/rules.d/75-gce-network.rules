@@ -20,3 +20,6 @@ SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic
 # Rule to rename RDMA devices
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming %E{ID_NET_DRIVER}", NAME="%c"
 SUBSYSTEM=="auxiliary", ACTION=="add", DRIVERS=="*irdma*", PROGRAM="/usr/bin/gce-nic-naming"
+
+# Rule to rename bare metal gVNIC devices
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="gve", ATTRS{vendor}=="0x1ae0", ATTRS{device}=="0x0043", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
