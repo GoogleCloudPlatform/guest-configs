@@ -458,10 +458,24 @@ function name_gpu_greater_ethernet() {
 }
 
 function run_ip_cmd() {
-  debug "Running command: ip $@"
-  if [[ "$TEST" != "test" ]]; then
-    ip "$@"
+  local ip_cmd=""
+  if [[ $TEST == 'test' ]]; then
+    ip_cmd="debug ip"
+  elif command -v ip >/dev/null 2>&1; then
+    ip_cmd=$(command -v ip)
+  elif [[ -x /usr/sbin/ip ]]; then
+    ip_cmd='/usr/sbin/ip'
+  elif [[ -x /sbin/ip ]]; then
+    ip_cmd='/sbin/ip'
+  elif [[ -x /bin/ip ]]; then
+    ip_cmd='/bin/ip'
   fi
+
+  if [[ -z "${ip_cmd}" ]]; then
+    error_and_exit "ip command not found"
+  fi
+  debug "Running command: ${ip_cmd} $@"
+  ${ip_cmd} "$@"
 }
 
 #################################
