@@ -307,6 +307,10 @@ get_network_interfaces() {
     echo "${network_interfaces[@]}"
 }
 
+function get_pci_network_interfaces() {
+  find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename
+}
+
 # For XPS affinity configuration, we'd do the following assignment:
 # 1. For each interface, divide the queues into two halves
 # 2. Evenly distribute the vCPUs on NUMA0 to the first half of the queues
@@ -381,9 +385,52 @@ function set_xps_affinity() {
   done
 }
 
+# Special features only for x4.
+function apply_x4_configs() {
+  echo "Configuring special features for x4."
+
+  # These systems often communicate over long RTTs, so make the max window large enough
+  local max_window="800000000"
+  sysctl net.ipv4.tcp_rmem="4096 873800 ${max_window}"
+  sysctl net.ipv4.tcp_wmem="4096 873800 ${max_window}"
+  sysctl net.core.rmem_max="${max_window}"
+  sysctl net.core.wmem_max="${max_window}"
+
+  # Globally enable RFS to reduce load on CPUs handling softirqs
+  # (still need per-queue enable).
+  sysctl net.core.rps_sock_flow_entries=262144
+
+  for nic_name in $(get_pci_network_interfaces); do
+    if ! is_idpf "$nic_name"; then
+      continue
+    fi
+
+    # Reconfigure the ring first, some driver versions fail to
+    # preserve interrupt affinity.
+    ethtool -G "$nic_name" rx 4096 tx 2048
+
+    # Make sure we have a well defined moderation setting.
+    ethtool -C "$nic_name" adaptive-tx off adaptive-rx off rx-usecs 20 tx-usecs 50
+
+    # Per-queue flow count for RFS.
+    # Assumes 16 queues -> 262144 / 16 = 16384.
+    echo 16384 | tee ${ROOT_DIR}sys/class/net/"$nic_name"/queues/rx-*/rps_flow_cnt > /dev/null
+  done
+
+  # Distribute IRQs across CPUs.
+  cpu=1; for i in $(echo ${ROOT_DIR}proc/irq/*/*TxRx*/../smp_affinity_list); do
+    echo $((cpu++)) > $i
+  done
+}
+
 echo "Running $(basename $0)."
 machine_type=$(get_metadata "instance/machine-type")
 echo "Machine type: $machine_type"
+
+if [[ "$machine_type" =~ "x4-" ]]; then
+  apply_x4_configs
+  exit 0
+fi
 
 VIRTIO_NET_DEVS=${ROOT_DIR}sys/bus/virtio/drivers/virtio_net/virtio*
 is_multinic_accelerator_platform
@@ -502,7 +549,7 @@ for ((node=0; node<num_numa_nodes; node++)); do
 
   echo -e "\nSetting IRQ affinity with vCPUs on NUMA${node} [${node_irq_ranges[@]}]"
   bind_cores_index=0
-  find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename | while read nic_name; do
+  for nic_name in $(get_pci_network_interfaces); do
     nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
     if [[ $nic_numa_node -ne $node ]]; then
       continue
