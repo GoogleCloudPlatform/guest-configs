@@ -683,7 +683,7 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     error_and_exit "No network devices found"
   fi
 
-  if [[ "${accelerator_devices[*]}" != "" ]]; then
+  if [[ "${accelerator_devices[*]}" != "" && "${gpu_nic_devices[*]}" != "" ]]; then
       determine_index_ratios
   fi
 
