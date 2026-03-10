@@ -52,8 +52,8 @@ function get_metadata() {
 }
 
 A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
-A4X_RX_RING_LENGTH="2048"
-A4X_TX_RING_LENGTH="1024"
+IDPF_RX_RING_LENGTH="2048"
+IDPF_TX_RING_LENGTH="1024"
 
 function is_decimal_int() {
   [ "${1}" -eq "${1}" ] > /dev/null 2>&1
@@ -179,7 +179,9 @@ function is_multinic_accelerator_platform() {
   || "$machine_type" == *"a4-highgpu-"* \
   || "$machine_type" == *"a4x-highgpu-"* \
   || "$machine_type" == *"a4x-maxgpu-"* \
-  || "$machine_type" == *"c4x-"* ]] || return 1
+  || "$machine_type" == *"c4x-"* \
+  || "$machine_type" == *"x4-"* \
+  ]] || return 1
   return 0
 }
 
@@ -552,16 +554,13 @@ for ((node=0; node<num_numa_nodes; node++)); do
       continue
     fi
 
-    # For IDPF at least, we need to reconfigure ring size before setting IRQ affinity,
-    # since adjusting the ring size destroys the IRQ affinity settings.
-    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
-      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
-    fi
-
     # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
     if is_gvnic "$nic_name"; then
       bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
     elif is_idpf "$nic_name"; then
+      # We need to reconfigure ring size before setting IRQ affinity, because
+      # adjusting the ring size destroys the IRQ affinity settings.
+      ethtool -G "$nic_name" rx "$IDPF_RX_RING_LENGTH" tx "$IDPF_TX_RING_LENGTH"
       bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
     else
       echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
