@@ -389,6 +389,66 @@ function set_xps_affinity() {
   done
 }
 
+function configure_irq_affinities() {
+  # Assign IRQ binding for network interfaces based on pci bus ordering.
+  # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
+  # used by the system.
+  for ((node=0; node<num_numa_nodes; node++)); do
+    ranges=$(get_vcpu_ranges "$node")
+
+    declare -a node_irq_ranges=()
+    unpack_cpu_ranges "${ranges}" node_irq_ranges
+
+    declare -r num_numa_cpus=${#node_irq_ranges[@]}
+
+    if [[ $node -eq 0 ]]; then
+      local total_unidirectional_queues=0
+      for nic in $(get_pci_network_interfaces); do
+        nic_node=$(cat ${ROOT_DIR}sys/class/net/"$nic"/device/numa_node)
+        if [[ $nic_node -ne $node ]]; then
+          continue
+        fi
+        if ! is_gvnic "$nic" && ! is_idpf "$nic" ; then
+          continue
+        fi
+
+        local rx_queues=$(ls -d ${ROOT_DIR}sys/class/net/$nic/queues/rx-* 2>/dev/null | wc -l)
+        total_unidirectional_queues=$((total_unidirectional_queues + rx_queues))
+      done
+
+      echo "total_unidirectional_queues=$total_unidirectional_queues num_numa_cpus=$num_numa_cpus"
+      if [[ $num_numa_cpus -gt $total_unidirectional_queues ]]; then
+        # Skip vCPU 0
+        node_irq_ranges=("${node_irq_ranges[@]:1}")
+      fi
+    fi
+
+    echo -e "\nSetting IRQ affinity with vCPUs on NUMA${node} [${node_irq_ranges[@]}]"
+    bind_cores_index=0
+    for nic_name in $(get_pci_network_interfaces); do
+      nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
+      if [[ $nic_numa_node -ne $node ]]; then
+        continue
+      fi
+
+      # For IDPF at least, we need to reconfigure ring size before setting IRQ affinity,
+      # since adjusting the ring size destroys the IRQ affinity settings.
+      if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
+        ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
+      fi
+
+      # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
+      if is_gvnic "$nic_name"; then
+        bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
+      elif is_idpf "$nic_name"; then
+        bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
+      else
+        echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
+      fi
+    done
+  done
+}
+
 # Special features only for x4.
 function apply_x4_configs() {
   echo "Configuring special features for x4."
@@ -502,69 +562,19 @@ do
     done
 done
 
-# Set smp_affinity properly for gvnic queues. '-ntfy-block.' is unique to gve
-# and will not affect virtio queues.
-for i in ${ROOT_DIR}proc/irq/*; do
-  if ls ${i}/*-ntfy-block.* 1> /dev/null 2>&1; then
-    if [ -f ${i}/affinity_hint ]; then
-      echo Setting smp_affinity on ${i} to $(cat ${i}/affinity_hint)
-      cp ${i}/affinity_hint ${i}/smp_affinity
-    fi
-  fi
-done
-
-if [[ ! $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
-  exit
-fi
-
 num_numa_nodes=$(ls -d ${ROOT_DIR}sys/devices/system/node/node* | wc -l)
 echo "Found ${num_numa_nodes} NUMA nodes."
 
-for ((node=0; node<num_numa_nodes; node++)); do
-  ranges=$(get_vcpu_ranges "$node")
-  dec_ranges=()
-  unpack_cpu_ranges "${ranges}" dec_ranges
+if [[ $IS_MULTINIC_ACCELERATOR_PLATFORM == 0 ]]; then
+  for ((node=0; node<num_numa_nodes; node++)); do
+    ranges=$(get_vcpu_ranges "$node")
+    dec_ranges=()
+    unpack_cpu_ranges "${ranges}" dec_ranges
 
-  echo -e "\nConfiguring XPS affinity for devices on NUMA ${node}"
-  echo -e "vCPUs on NUMA${node} [${dec_ranges[@]}]"
-  set_xps_affinity "$node" "${dec_ranges[@]}"
-done
-
-# Assign IRQ binding for network interfaces based on pci bus ordering.
-# Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
-# used by the system.
-for ((node=0; node<num_numa_nodes; node++)); do
-  ranges=$(get_vcpu_ranges "$node")
-
-  declare -a node_irq_ranges=()
-  unpack_cpu_ranges "${ranges}" node_irq_ranges
-
-  if [[ $node -eq 0 ]]; then
-    # Skip vCPU 0
-    node_irq_ranges=("${node_irq_ranges[@]:1}")
-  fi
-
-  echo -e "\nSetting IRQ affinity with vCPUs on NUMA${node} [${node_irq_ranges[@]}]"
-  bind_cores_index=0
-  for nic_name in $(get_pci_network_interfaces); do
-    nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
-    if [[ $nic_numa_node -ne $node ]]; then
-      continue
-    fi
-
-    # For IDPF at least, we need to reconfigure ring size before setting IRQ affinity,
-    # since adjusting the ring size destroys the IRQ affinity settings.
-    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
-      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
-    fi
-
-    # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
-    if is_gvnic "$nic_name"; then
-      bind_cores_index=$(set_irq_range_gve "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
-    elif is_idpf "$nic_name"; then
-      bind_cores_index=$(set_irq_range_idpf "$nic_name" "$bind_cores_index" "${node_irq_ranges[@]}")
-    else
-      echo "$nic_name is not a gvnic/idpf device, not setting irq affinity on this device"
-    fi
+    echo -e "\nConfiguring XPS affinity for devices on NUMA ${node}"
+    echo -e "vCPUs on NUMA${node} [${dec_ranges[@]}]"
+    set_xps_affinity "$node" "${dec_ranges[@]}"
   done
-done
+fi
+
+configure_irq_affinities
