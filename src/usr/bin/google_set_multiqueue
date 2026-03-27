@@ -92,6 +92,8 @@ function set_irq_range_idpf() {
     echo "${core}" > "${ROOT_DIR}proc/irq/${actual_irqs[$i]}/smp_affinity_list"
     bind_cores_index=$((bind_cores_index + 1))
   done
+
+  echo "$bind_cores_index"
 }
 
 function set_irq_range_gve() {
@@ -179,6 +181,7 @@ function is_multinic_accelerator_platform() {
   || "$machine_type" == *"a4-highgpu-"* \
   || "$machine_type" == *"a4x-highgpu-"* \
   || "$machine_type" == *"a4x-maxgpu-"* \
+  || "$machine_type" == *"c4n-"* \
   || "$machine_type" == *"c4x-"* ]] || return 1
   return 0
 }
@@ -213,6 +216,11 @@ function is_idpf() {
 function get_vcpu_ranges {
   local numa_node="$1"
   local cpulist_file="${ROOT_DIR}sys/devices/system/node/node${numa_node}/cpulist"
+  if [[ $numa_node -eq -1 ]]; then
+    # Treat node -1 (unknown) as a special case, as if it were every CPU on the
+    # system.
+    cpulist_file="${ROOT_DIR}sys/devices/system/cpu/online"
+  fi
   if [ -f "$cpulist_file" ]; then
     local cpulist=$(cat "$cpulist_file" | tr ',' ' ')
     local result=""
@@ -530,17 +538,15 @@ for ((node=0; node<num_numa_nodes; node++)); do
   set_xps_affinity "$node" "${dec_ranges[@]}"
 done
 
-# Assign IRQ binding for network interfaces based on pci bus ordering.
-# Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
-# used by the system.
-for ((node=0; node<num_numa_nodes; node++)); do
+for ((node=-1; node<num_numa_nodes; node++)); do
   ranges=$(get_vcpu_ranges "$node")
 
   declare -a node_irq_ranges=()
   unpack_cpu_ranges "${ranges}" node_irq_ranges
 
-  if [[ $node -eq 0 ]]; then
-    # Skip vCPU 0
+  if [[ $node -eq 0 || $node -eq -1 ]]; then
+    # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU heavily used by
+    # the system.
     node_irq_ranges=("${node_irq_ranges[@]:1}")
   fi
 
