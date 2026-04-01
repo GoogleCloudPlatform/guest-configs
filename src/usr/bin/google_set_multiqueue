@@ -67,6 +67,7 @@ function set_irq_range_idpf() {
   local -r nic="$1"
   local bind_cores_index="$2"
   local irq_ranges=("${@:3}")
+  local irq_ranges_len=${#irq_ranges[@]}
 
   # The user may not have this $nic configured on their VM, if not, just skip
   # it, no need to error out.
@@ -87,17 +88,21 @@ function set_irq_range_idpf() {
   done
   local num_irqs=${#actual_irqs[@]}
   for ((i=0; i<num_irqs; i+=1)); do
-    core="${irq_ranges[${bind_cores_index}]}"
+    local wrapped_index=$(( bind_cores_index % irq_ranges_len ))
+    core="${irq_ranges[${wrapped_index}]}"
     echo "Setting irq binding for "$nic" to core ${actual_irqs[$i]} to "${core} >&2
     echo "${core}" > "${ROOT_DIR}proc/irq/${actual_irqs[$i]}/smp_affinity_list"
     bind_cores_index=$((bind_cores_index + 1))
   done
+
+  echo "$bind_cores_index"
 }
 
 function set_irq_range_gve() {
   local -r nic="$1"
   local bind_cores_index="$2"
   local irq_ranges=("${@:3}")
+  local irq_ranges_len=${#irq_ranges[@]}
 
   # The user may not have this $nic configured on their VM, if not, just skip
   # it, no need to error out.
@@ -121,7 +126,8 @@ function set_irq_range_gve() {
 
     # Only allocate $num_q cores to the IRQs and queues. If the number of IRQs
     # is more than that of queues, the CPUs will be wrapped around.
-    core="${irq_ranges[${bind_cores_index}]}"
+    local wrapped_index=$(( bind_cores_index % irq_ranges_len ))
+    core="${irq_ranges[${wrapped_index}]}"
     ((bind_cores_index++))
 
     # this is GVE's TX irq. See gve_tx_idx_to_ntfy().
@@ -179,6 +185,7 @@ function is_multinic_accelerator_platform() {
   || "$machine_type" == *"a4-highgpu-"* \
   || "$machine_type" == *"a4x-highgpu-"* \
   || "$machine_type" == *"a4x-maxgpu-"* \
+  || "$machine_type" == *"c4n-"* \
   || "$machine_type" == *"c4x-"* ]] || return 1
   return 0
 }
