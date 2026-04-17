@@ -190,6 +190,16 @@ function is_multinic_accelerator_platform() {
   return 0
 }
 
+# returns 0 (success) if the supplied nic is a VIRTIO device.
+function is_virtio() {
+  local -r nic_name="$1"
+  local -r driver_type=$(ethtool -i $nic_name | grep driver)
+
+  [[ "$driver_type" == *"virtio_net"* ]] || return 1
+
+  return 0
+}
+
 # returns 0 (success) if the supplied nic is a Gvnic device.
 function is_gvnic() {
   local -r nic_name="$1"
@@ -440,31 +450,30 @@ VIRTIO_NET_DEVS=${ROOT_DIR}sys/bus/virtio/drivers/virtio_net/virtio*
 is_multinic_accelerator_platform
 IS_MULTINIC_ACCELERATOR_PLATFORM=$?
 
-# Loop through all the virtionet devices and enable multi-queue
+# Enable max supported queue count for IDPF devices.
 if [ -x "$(command -v ethtool)" ]; then
-  for dev in $VIRTIO_NET_DEVS; do
-    ETH_DEVS=${dev}/net/*
-    for eth_dev in $ETH_DEVS; do
-      eth_dev=$(basename "$eth_dev")
-      if ! errormsg=$(ethtool -l "$eth_dev" 2>&1); then
-        echo "ethtool says that $eth_dev does not support virtionet multiqueue: $errormsg."
-        continue
-      fi
-      num_max_channels=$(ethtool -l "$eth_dev" | grep -m 1 Combined | cut -f2)
-      if [[ -n "${num_max_channels}" || "${num_max_channels}" -eq "1" ]]; then
-        echo "num_max_channels is n/a, skipping set channels for $eth_dev"
-        continue
-      fi
-      if is_decimal_int "$num_max_channels" && \
-        set_channels "$eth_dev" "$num_max_channels"; then
-        echo "Set channels for $eth_dev to $num_max_channels."
-      else
-        echo "Could not set channels for $eth_dev to $num_max_channels."
-      fi
-    done
+  for eth_dev in $(get_pci_network_interfaces); do
+    if ! is_idpf "$eth_dev"; then
+      continue
+    fi
+    if ! errormsg=$(ethtool -l "$eth_dev" 2>&1); then
+      echo "\`ethtool -l\` failed for $eth_dev: $errormsg."
+      continue
+    fi
+    num_max_channels=$(ethtool -l "$eth_dev" | grep -m 1 Combined | cut -f2)
+    if [[ -z "${num_max_channels}" || "${num_max_channels}" -eq "1" ]]; then
+      echo "num_max_channels is n/a, skipping set channels for $eth_dev"
+      continue
+    fi
+    if ! is_decimal_int "$num_max_channels"; then
+      echo "Could not set channels for $eth_dev to $num_max_channels."
+      continue
+    fi
+    set_channels "$eth_dev" "$num_max_channels"
+    echo "Set channels for $eth_dev to $num_max_channels."
   done
 else
-  echo "ethtool not found: cannot configure virtionet multiqueue."
+  echo "ethtool not found: unable to configure device queue counts"
 fi
 
 for dev in $VIRTIO_NET_DEVS
