@@ -22,8 +22,8 @@ declare DEVICE_DRIVER="$1"
 readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 
 # Path to the PCI bus devices
-declare PCI_BUS_PATH='/sys/bus/pci/devices'
-declare SYS_PREPEND_PATH='/sys'
+declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
+declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
 readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
@@ -163,9 +163,12 @@ function list_devices() {
   # Walks the pci device bus and looks for any relevant devices
   for pci_device in ${paths}; do
     # Example: 0000:00:04.0
-    local -i int_id=$(get_id_from_path "${pci_device}")
-    local vendor=$(cat "${pci_device}/vendor")
-    local device=$(cat "${pci_device}/device")
+    local -i int_id
+    get_id_from_path "${pci_device}" int_id
+    local vendor
+    local device
+    read vendor < "${pci_device}/vendor"
+    read device < "${pci_device}/device"
     vendor="${vendor#0x}"
     device="${device#0x}"
     device_id="${vendor}:${device}"
@@ -321,17 +324,17 @@ function get_id_from_path() {
   # DEVPATH=/devices/pci0000:88/0000:88:00.0/0000:89:00.0/0000:8a:03.0/0000:8e:00.0/net/eth9
   # Last part of the path is the ID. (00008e000)
   local path=$1
-  #local path_id=$(echo "${path}" | grep -oe "${PCI_ID_REGEX}" | tail -1 )
-  # Use bash built in regex to get all values matching the PCI ID pattern
-  local path_id=$(while [[ $path =~ $PCI_ID_REGEX ]]; do
-    echo "${BASH_REMATCH[0]}"
+  local -n result_var=$2
+  # Use bash built in regex to find the last value matching the PCI ID pattern.
+  local path_id=""
+  while [[ $path =~ $PCI_ID_REGEX ]]; do
+    path_id="${BASH_REMATCH[0]}"
     path="${path#*${BASH_REMATCH[0]}}"
-  done | tail -n 1 )
+  done
 
   # Bash replacement does not work with the regex values
   local hex_id="${path_id//[:.]/}"
-  local -i int_id="$((0x$hex_id))"
-  echo ${int_id}
+  result_var="$((0x$hex_id))"
 }
 
 ################################
@@ -590,7 +593,8 @@ function generate_gpu_nic_name_has_physfn() {
   local -i int_id=$1
   local vf_path=$2
   local physfn_path=$3
-  local -i physfn_int_id=$(get_id_from_path "${physfn_path}")
+  local -i physfn_int_id
+  get_id_from_path "${physfn_path}" physfn_int_id
 
   local vf_vendor=$(cat "${vf_path}/device/vendor")
   local vf_device=$(cat "${vf_path}/device/device")
@@ -634,7 +638,8 @@ function generate_gpu_nic_name_has_physfn() {
 ###############################
 function generate_name() {
   local device_path=$1
-  local -i int_id=$(get_id_from_path "${device_path}")
+  local -i int_id
+  get_id_from_path "${device_path}" int_id
   debug "Path discovered int_id: ${int_id}"
 
   # Pass the array of keys to find index of this device
