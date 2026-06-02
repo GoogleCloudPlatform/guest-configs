@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2024 Google LLC.
+# Copyright 2026 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,14 +11,9 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
-# limitations under the License.
+# limitations under the License
 
-ACTION="$2"
-# Only execute on 'up' or 'dhcp-change' events
-if [[ "$ACTION" != "up" && "$ACTION" != "dhcp4-change" && "$ACTION" != "dhcp6-change" && "$ACTION" != "reapply" ]]; then
-    exit 0
 # Execute in the background with severed file descriptors (>/dev/null 2>&1 &)
-# to avoid blocking NetworkManager dispatcher transitions on MDS queries or
-# network latency. Concurrency is handled by locking in google_set_metadata_network.
-/usr/bin/google_set_metadata_network "$1" >/dev/null 2>&1 &
-
+# to avoid blocking networkd-dispatcher event handling on MDS queries or network
+# latency. Concurrency is handled by locking in google_set_metadata_network.
+/usr/bin/google_set_metadata_network "$IFACE" >/dev/null 2>&1 &

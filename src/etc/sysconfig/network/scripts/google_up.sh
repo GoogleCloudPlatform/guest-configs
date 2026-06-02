@@ -13,9 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-instance=$(curl -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/instance/?recursive=true)
+# Called by wicked via POST_UP_SCRIPT when an interface comes online
+INTERFACE=$1
+# Ignore the local loopback interface so we don't spam the Metadata server
+if [ "$INTERFACE" = "lo" ] || [ -z "$INTERFACE" ]; then
+    exit 0
+fi
 
-# Ensure that the hostname and IP address are set only for the primary NIC.
-new_ip_address=$(jq -r .networkInterfaces[0].ip <<< $instance)
-new_host_name=$(jq -r .hostname <<< $instance)
-new_ip_address=$new_ip_address new_host_name=$new_host_name google_set_hostname
+# Execute in the background with severed file descriptors (>/dev/null 2>&1 &)
+# to avoid blocking the wicked network bringup process on MDS queries or network
+# latency. Concurrency is handled by locking in google_set_metadata_network.
+/usr/bin/google_set_metadata_network "$1" >/dev/null 2>&1 &

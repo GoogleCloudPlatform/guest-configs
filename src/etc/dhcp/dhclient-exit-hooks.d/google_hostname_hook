@@ -1,5 +1,5 @@
-#!/bin/bash
-# Copyright 2024 Google LLC.
+#!/bin/sh
+# Copyright 2026 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-# Execute in the background with severed file descriptors (>/dev/null 2>&1 &)
-# to avoid blocking networkd-dispatcher event handling on MDS queries or network
-# latency. Concurrency is handled by locking in google_set_metadata_network.
-/usr/bin/google_set_metadata_network "$IFACE" >/dev/null 2>&1 &
+if [ "$reason" = "BOUND" ] || [ "$reason" = "RENEW" ] || [ "$reason" = "REBIND" ] || [ "$reason" = "REBOOT" ] || [ "$reason" = "BOUND6" ] || [ "$reason" = "RENEW6" ]; then
+    # Execute in the background with severed file descriptors (>/dev/null 2>&1 &)
+    # to avoid blocking DHCP lease processing on MDS queries or network latency.
+    # Concurrency is handled by locking in google_set_metadata_network.
+    /usr/bin/google_set_metadata_network "$interface" >/dev/null 2>&1 &
+fi
