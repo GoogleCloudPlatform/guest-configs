@@ -14,6 +14,11 @@
 # Must import here to make ID_NET_NAME_PATH available to program
 IMPORT{builtin}="net_id"
 
+SUBSYSTEM=="pci", ENV{PCI_ID}=="8086:1452", TAG+="enable_sriov"
+
+# Enable max number of VFs for all 'enable_sriov' tagged devices.
+TAG=="enable_sriov", TEST=="sriov_numvfs", ATTR{sriov_numvfs}="$attr{sriov_totalvfs}"
+
 # Rule to rename Mellanox devices
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
