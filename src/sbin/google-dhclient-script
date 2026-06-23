@@ -58,12 +58,15 @@ eventually_add_hostnames_domain_to_search() {
     if need_hostname; then
         status=1
         if [ -n "${new_ip_address}" ]; then
-            eval $(/bin/ipcalc --silent --hostname ${new_ip_address} ; echo "status=$?")
+            ipcalc_output=$(/bin/ipcalc --silent --hostname "${new_ip_address}")
+            status=$?
         elif [ -n "${new_ip6_address}" ]; then
-            eval $(/bin/ipcalc --silent --hostname ${new_ip6_address} ; echo "status=$?")
+            ipcalc_output=$(/bin/ipcalc --silent --hostname "${new_ip6_address}")
+            status=$?
         fi
 
-        if [ ${status} -eq 0 ]; then
+        if [ ${status} -eq 0 ] && [[ "${ipcalc_output}" = HOSTNAME=* ]]; then
+            HOSTNAME="${ipcalc_output#HOSTNAME=}"
             domain=$(echo $HOSTNAME | cut -s -d "." -f 2-)
         fi
     else
