@@ -31,13 +31,15 @@ readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
 readonly IRDMA_DEVICES_VENDORS=('8086:145c')
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
 # 0x15b3:0x1023 is the vendor and device ID for Mellanox CX8
-readonly GPU_NIC_DEVICES_VENDORS=('15b3:101e' '15b3:1023')
+# 0x15b3:0x1025 is the vendor and device ID for Mellanox CX9
+readonly GPU_NIC_DEVICES_VENDORS=('15b3:101e' '15b3:1023' '15b3:1025')
 # 0x10de:0x2330 is the vendor and device ID for Nvidia H100 -> A3 (not using this script)
 # 0x10de:0x2335 is the vendor and device ID for Nvidia H200 -> A3U
 # 0x10de:0x2901 is the vendor and device ID for Nvidia B200 -> A4
 # 0x10de:0x2941 is the vendor and device ID for Nvidia GB200 -> A4X
 # 0x10de:0x31c2 is the vendor and device ID for Nvidia GB300 -> A4X Metal
-readonly GPU_DEVICES_VENDORS=('10de:2330' '10de:2335' '10de:2901' '10de:2941' '10de:31c2')
+# 0x10de:0x3041 is the vendor and device ID for Nvidia VR200 -> A5X
+readonly GPU_DEVICES_VENDORS=('10de:2330' '10de:2335' '10de:2901' '10de:2941' '10de:31c2' '10de:3041')
 # PCI BUS ID path is in the format of 0000:00:04.0
 readonly PCI_ID_REGEX='[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+'
 
