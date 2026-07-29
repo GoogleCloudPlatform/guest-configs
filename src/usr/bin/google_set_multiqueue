@@ -425,15 +425,27 @@ function set_idpf_queue_counts() {
   done
 }
 
-# Special features only for x4.
-function apply_x4_configs() {
-  echo "Configuring special features for x4."
+# Special features only for x series machines.
+function apply_xseries_configs() {
+  echo "Configuring special features for x series machines."
+
+  local -r rps_per_queue_flow_cnt=16384
+  local -r pci_nics=$(get_pci_network_interfaces)
+  local num_rx_queues=0
+  for nic_name in $pci_nics; do
+    if is_idpf "$nic_name"; then
+      queues=(${ROOT_DIR}sys/class/net/"$nic_name"/queues/rx-*)
+      if [[ -e "${queues[0]}" ]]; then
+        num_rx_queues=$((num_rx_queues + ${#queues[@]}))
+      fi
+    fi
+  done
 
   # Globally enable RFS to reduce load on CPUs handling softirqs
   # (still need per-queue enable).
-  sysctl net.core.rps_sock_flow_entries=262144
+  sysctl net.core.rps_sock_flow_entries=$((num_rx_queues * rps_per_queue_flow_cnt))
 
-  for nic_name in $(get_pci_network_interfaces); do
+  for nic_name in $pci_nics; do
     if ! is_idpf "$nic_name"; then
       continue
     fi
@@ -446,8 +458,7 @@ function apply_x4_configs() {
     ethtool -C "$nic_name" adaptive-tx off adaptive-rx off rx-usecs 20 tx-usecs 50
 
     # Per-queue flow count for RFS.
-    # Assumes 16 queues -> 262144 / 16 = 16384.
-    echo 16384 | tee ${ROOT_DIR}sys/class/net/"$nic_name"/queues/rx-*/rps_flow_cnt > /dev/null
+    echo "$rps_per_queue_flow_cnt" | tee ${ROOT_DIR}sys/class/net/"$nic_name"/queues/rx-*/rps_flow_cnt > /dev/null
   done
 
   # Distribute IRQs across CPUs.
@@ -460,8 +471,8 @@ echo "Running $(basename $0)."
 machine_type=$(get_metadata "instance/machine-type")
 echo "Machine type: $machine_type"
 
-if [[ "$machine_type" =~ "x4-" ]]; then
-  apply_x4_configs
+if [[ "$machine_type" =~ x[4-5]- ]]; then
+  apply_xseries_configs
   exit 0
 fi
 
