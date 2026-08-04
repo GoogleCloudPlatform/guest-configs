@@ -45,6 +45,7 @@ readonly PCI_ID_REGEX='[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+'
 
 # Array of devices by with vendor info
 declare -a ethernet_devices
+declare -a irdma_devices
 declare -a gpu_nic_devices
 declare -a accelerator_devices
 
@@ -142,18 +143,19 @@ function determine_index_ratios() {
 #     relevant to intent based naming
 #   GPU_DEVICES_VENDORS: Array of gpu device vendors relevant to intent based
 #     naming
+#   IRDMA_DEVICES_VENDORS: Array of irdma device vendors relevant to intent
+#     based naming
+#   RDMA_TEST_FOLDER: Folder name to test for RDMA devices
 #   ethernet_devices: Array of ethernet devices
 #   gpu_nic_devices: Array of gpu nic devices
 #   accelerator_devices: Array of processor devices
-# Arguments:
-#   $1: Name reference to the array of ethernet devices
-#   $2: Name reference to the array of processor devices
-#   $@: Paths to search for devices
 ###############################
 function list_devices() {
   local -n ethernet_map="$1"
-  local -n gpu_nic_map="$2"
-  local -n accelerator_map="$3"
+  local -n irdma_map="$2"
+  local -n gpu_nic_map="$3"
+  local -n accelerator_map="$4"
+  shift
   shift
   shift
   shift
@@ -161,6 +163,8 @@ function list_devices() {
 
   info "Generating for paths: ${paths[*]}"
   unset IFS
+
+  local rdma_folder="${RDMA_TEST_FOLDER:-infiniband}"
 
   # Walks the pci device bus and looks for any relevant devices
   for pci_device in ${paths}; do
@@ -174,7 +178,9 @@ function list_devices() {
     vendor="${vendor#0x}"
     device="${device#0x}"
     device_id="${vendor}:${device}"
-    if [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
+    if [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]] && [[ -d "${pci_device}/${rdma_folder}" ]]; then
+      irdma_map[${int_id}]=${device_id}
+    elif [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
       ethernet_map[${int_id}]=${device_id}
     fi
     if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
@@ -194,6 +200,8 @@ function list_devices() {
   done
   debug $(printf "Generated ethernet_devices_map: %s %s" "${!ethernet_map[*]}" \
     "${ethernet_map[*]}")
+  debug $(printf "Generated irdma_devices_map: %s %s" "${!irdma_map[*]}" \
+    "${irdma_map[*]}")
   debug $(printf "Generated gpu_nic_devices_map: %s %s" "${!gpu_nic_map[*]}" \
     "${gpu_nic_map[*]}")
   debug $(printf "Generated accelerator_devices_map: %s %s" "${!accelerator_map[*]}" \
@@ -218,9 +226,11 @@ function gather_lowest_denominator_devices() {
 
   # Clear the arrays
   unset bus_specific_ethernet_device_map
+  unset bus_specific_irdma_device_map
   unset bus_specific_gpu_nic_device_map
   unset bus_specific_accelerator_device_map
   declare -ga bus_specific_ethernet_device_map
+  declare -ga bus_specific_irdma_device_map
   declare -ga bus_specific_gpu_nic_device_map
   declare -ga bus_specific_accelerator_device_map
 
@@ -245,7 +255,7 @@ function gather_lowest_denominator_devices() {
   if [[ ${line_count} -gt 1 ]]; then
     # build array
     # NOTE: Calling in a $() will not modify the array in this instance
-    list_devices bus_specific_ethernet_device_map bus_specific_gpu_nic_device_map bus_specific_accelerator_device_map "${output}"
+    list_devices bus_specific_ethernet_device_map bus_specific_irdma_device_map bus_specific_gpu_nic_device_map bus_specific_accelerator_device_map "${output}"
 
     if [[ ${#bus_specific_gpu_nic_device_map[@]} -ne 0 ]] && [[ ${#bus_specific_accelerator_device_map[@]} -ne 0 ]]; then
 
@@ -523,7 +533,7 @@ function generate_ethernet_name() {
       # to claim the eth0 name so give it a PCI path based name instead.
       #
       notice "Non RDMA VF NIC. Setting name to path name"
-	    name_builder=$ID_NET_NAME_PATH
+      name_builder=$ID_NET_NAME_PATH
     else
       # If device path is empty it indicates other changes happening so this script will skip
       error_and_exit "DEVPATH provided is empty, skipping naming. Path:${device_path}"
@@ -534,6 +544,27 @@ function generate_ethernet_name() {
   fi
 
   notice "eth nic name: ${name_builder} for device_path: ${device_path}"
+  echo ${name_builder}
+}
+
+#################################
+# Generate the irdma name of the device based on the vendor
+#
+# Arguments:
+#   $1: Vendor of the irdma device
+#   $2: Index of the irdma device in irdma_devices array
+#   $3: Device path of the irdma device
+# Outputs:
+#   Name of the device (rdma0, rdma1, etc.)
+#################################
+function generate_irdma_name() {
+  local int_id=$1
+  local irdma_index=$2
+  local device_path=$3
+
+  local name_builder="rdma${irdma_index}"
+
+  notice "irdma nic name: ${name_builder} for device_path: ${device_path}"
   echo ${name_builder}
 }
 
@@ -652,6 +683,13 @@ function generate_name() {
     return
   fi
 
+  local -i irdma_index=$(get_index ${int_id} "${!irdma_devices[@]}")
+  debug "irdma device index: ${irdma_index}"
+  if [[ ${irdma_index} -ne -1 ]]; then
+    echo $(generate_irdma_name ${int_id} ${irdma_index} ${device_path})
+    return
+  fi
+
   local -i gpu_nic_index=$(get_index ${int_id} "${!gpu_nic_devices[@]}")
   debug "gpu_nic device index: ${gpu_nic_index}"
   if [[ ${gpu_nic_index} -ne -1 ]]; then
@@ -683,10 +721,10 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     notice "Triggered for non Net Device"
   fi
   # Note can not use "" around ls path here or it errors out
-  list_devices ethernet_devices gpu_nic_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
+  list_devices ethernet_devices irdma_devices gpu_nic_devices accelerator_devices "$(ls -d "${PCI_BUS_PATH}"/*)"
 
     # Check if any devices were found
-  if [[ "${gpu_nic_devices[*]}" == "" && "${ethernet_devices[*]}" == "" ]]; then
+  if [[ "${gpu_nic_devices[*]}" == "" && "${ethernet_devices[*]}" == "" && "${irdma_devices[*]}" == "" ]]; then
     error_and_exit "No network devices found"
   fi
 
