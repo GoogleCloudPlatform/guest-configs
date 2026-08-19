@@ -52,15 +52,20 @@ function get_metadata() {
 }
 
 A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
-A4X_RX_RING_LENGTH="2048"
-A4X_TX_RING_LENGTH="1024"
+IDPF_RX_RING_LENGTH="4096"
+IDPF_TX_RING_LENGTH="4096"
+IDPF_DEFAULT_RING_LENGTH="512"
 
 function is_decimal_int() {
   [ "${1}" -eq "${1}" ] > /dev/null 2>&1
 }
 
-function set_channels() {
+function set_combined_channels() {
   ethtool -L "${1}" combined "${2}" > /dev/null 2>&1
+}
+
+function set_rx_tx_ring_length() {
+  ethtool -G "${1}" rx "${2}" tx "${3}" > /dev/null 2>&1
 }
 
 function set_irq_range_idpf() {
@@ -396,8 +401,102 @@ function set_xps_affinity() {
   done
 }
 
+function try_set_idpf_channels() {
+  local -r eth_dev="$1"
+  if ! errormsg=$(ethtool -l "$eth_dev" 2>&1); then
+      echo "\`ethtool -l\` failed for $eth_dev: $errormsg."
+    return 1
+  fi
+
+  # Sample output follows.
+  #
+  # Channel parameters for eth0:
+  #  Pre-set maximums:
+  #  RX:		16
+  #  TX:		16
+  #  Other:		1
+  #  Combined:	16
+  #  Current hardware settings:
+  #  RX:		0
+  #  TX:		0
+  #  Other:		1
+  #  Combined:	16
+
+  num_max_channels=$(ethtool -l "$eth_dev" | grep -m 1 Combined | awk '{print $NF}')
+  if [[ -z "${num_max_channels}" || "${num_max_channels}" -eq "1" ]]; then
+    echo "num_max_channels is n/a, skipping set channels for $eth_dev"
+    return 1
+  fi
+  if ! is_decimal_int "$num_max_channels"; then
+    echo "Setting channels for $eth_dev: $num_max_channels is not a decimal int."
+    return 1
+  fi
+  if ! set_combined_channels "$eth_dev" "$num_max_channels"; then
+    echo "Failed to set channels for $eth_dev to $num_max_channels."
+    return 1
+  fi
+  echo "Set channels for $eth_dev to $num_max_channels."
+  return 0
+}
+
+function try_set_idpf_ring_length() {
+  local -r eth_dev="$1"
+  if ! errormsg=$(ethtool -g "$eth_dev" 2>&1); then
+    echo "\`ethtool -g\` failed for $eth_dev: $errormsg."
+    return 1
+  fi
+  local -r ethtool_output=$(ethtool -g "$eth_dev")
+  # Matching assumes that max is listed first, then current, and that there
+  # are no other matches in the output.
+  # Sample output follows.
+  #
+  # Ring parameters for eth0:
+  # Pre-set maximums:
+  # RX:			8128
+  # RX Mini:		n/a
+  # RX Jumbo:		n/a
+  # TX:			8160
+  # TX push buff len:	n/a
+  # Current hardware settings:
+  # RX:			512
+  # RX Mini:		n/a
+  # RX Jumbo:		n/a
+  # TX:			512
+  # RX Buf Len:		n/a
+  # CQE Size:		n/a
+  # TX Push:		off
+  # RX Push:		off
+  # TX push buff len:	n/a
+  # TCP data split:		on
+
+  local -r max_rx=$(echo $"$ethtool_output" | awk '/RX:/{print; exit}')
+  local -r max_tx=$(echo $"$ethtool_output" | awk '/TX:/{print; exit}')
+  local -r current_rx=$(echo $"$ethtool_output" | awk '/RX:/{last=$0} END{print last}')
+  local -r current_tx=$(echo $"$ethtool_output" | awk '/TX:/{last=$0} END{print last}')
+  if [[ $max_rx -lt $IDPF_RX_RING_LENGTH ]]; then
+    echo "Reported max RX ring length for $eth_dev is $max_rx, which is less than the desired $IDPF_RX_RING_LENGTH."
+    return 1
+  fi
+  if [[ $max_tx -lt $IDPF_RX_RING_LENGTH ]]; then
+    echo "Reported max TX ring length for $eth_dev is $max_tx, which is less than the desired $IDPF_TX_RING_LENGTH."
+    return 1
+  fi
+  if [[ $current_rx -ne $IDPF_DEFAULT_RING_LENGTH || $current_tx -ne $IDPF_DEFAULT_RING_LENGTH ]]; then
+    echo "Current RX/TX ($current_rx/$current_tx) ring len for $eth_dev is not the default ($IDPF_DEFAULT_RING_LENGTH). Not setting ring length."
+    return 0
+  fi
+
+  if ! set_rx_tx_ring_length "$eth_dev" "$IDPF_RX_RING_LENGTH" "$IDPF_TX_RING_LENGTH"; then
+    echo "Failed to set ring length for $eth_dev to $IDPF_RX_RING_LENGTH (RX) and $IDPF_TX_RING_LENGTH (TX)."
+    return 1
+  fi
+
+  echo "Set ring length for $eth_dev to $IDPF_RX_RING_LENGTH (RX) and $IDPF_TX_RING_LENGTH (TX)."
+  return 0
+}
+
 # Enable max supported queue count for IDPF devices.
-function set_idpf_queue_counts() {
+function set_idpf_configs() {
   if [ ! -x "$(command -v ethtool)" ]; then
     echo "ethtool not found: unable to configure device queue counts"
     return
@@ -407,21 +506,12 @@ function set_idpf_queue_counts() {
     if ! is_idpf "$eth_dev"; then
       continue
     fi
-    if ! errormsg=$(ethtool -l "$eth_dev" 2>&1); then
-      echo "\`ethtool -l\` failed for $eth_dev: $errormsg."
-      continue
+    if ! try_set_idpf_channels "$eth_dev"; then
+      echo "Failed to set channels for $eth_dev"
     fi
-    num_max_channels=$(ethtool -l "$eth_dev" | grep -m 1 Combined | awk '{print $NF}')
-    if [[ -z "${num_max_channels}" || "${num_max_channels}" -eq "1" ]]; then
-      echo "num_max_channels is n/a, skipping set channels for $eth_dev"
-      continue
+    if ! try_set_idpf_ring_length "$eth_dev"; then
+      echo "Failed to set ring length for $eth_dev"
     fi
-    if ! is_decimal_int "$num_max_channels"; then
-      echo "Could not set channels for $eth_dev to $num_max_channels."
-      continue
-    fi
-    set_channels "$eth_dev" "$num_max_channels"
-    echo "Set channels for $eth_dev to $num_max_channels."
   done
 }
 
@@ -480,7 +570,7 @@ VIRTIO_NET_DEVS=${ROOT_DIR}sys/bus/virtio/drivers/virtio_net/virtio*
 is_multinic_accelerator_platform
 IS_MULTINIC_ACCELERATOR_PLATFORM=$?
 
-set_idpf_queue_counts
+set_idpf_configs
 
 for dev in $VIRTIO_NET_DEVS
 do
@@ -572,12 +662,6 @@ for ((node=0; node<num_numa_nodes; node++)); do
     nic_numa_node=$(cat ${ROOT_DIR}sys/class/net/"$nic_name"/device/numa_node)
     if [[ $nic_numa_node -ne $node ]]; then
       continue
-    fi
-
-    # For IDPF at least, we need to reconfigure ring size before setting IRQ affinity,
-    # since adjusting the ring size destroys the IRQ affinity settings.
-    if [[ $machine_type == *"a4x-maxgpu-"* ]]; then
-      ethtool -G "$nic_name" rx "$A4X_RX_RING_LENGTH" tx "$A4X_TX_RING_LENGTH"
     fi
 
     # For non-gvnic/idpf devices (e.g. mlx5), the IRQ bindings will be handled by the device's driver.
