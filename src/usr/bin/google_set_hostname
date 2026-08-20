@@ -39,23 +39,35 @@ if ! retain_legacy_behavior; then
 	exec ggactl coreplugin send '{"Command":"agent.hostname.reconfigurehostname"}'
 fi
 
-if [ -n "$new_host_name" ] && [ -n "$new_ip_address" ]; then
-  # Delete entries with new_host_name or new_ip_address in /etc/hosts.
-  sed -i"" '/Added by Google/d' /etc/hosts
+# Only run if we have metadata to process
+# This sets the hostname in /etc/hosts
+if [ -n "$GOOGLE_METADATA_JSON" ]; then
+  # Extract Identity via jq
+  hostname=$(echo "$GOOGLE_METADATA_JSON" | jq -r '.hostname // empty')
+  new_host_name="$hostname"
+  ip4=$(echo "$GOOGLE_METADATA_JSON" | jq -r '.networkInterfaces[0].ip //empty')
+  ip6=$(echo "$GOOGLE_METADATA_JSON" | jq -r '.networkInterfaces[0].ipv6s[0] // empty')
 
-  # Don't allow DHCP responses with the MDS as the hostname.
-  # See: https://github.com/irsl/gcp-dhcp-takeover-code-exec
-  if echo "$new_host_name" | grep -iq "metadata.google.internal"; then
-    echo "not setting invalid hostname"
-  else
-    # Add an entry for our new_host_name/new_ip_address in /etc/hosts.
-    echo "${new_ip_address} ${new_host_name} ${new_host_name%%.*}  # Added by Google" >> /etc/hosts
-  fi
+  if [ -n "$hostname" ] && ! echo "$hostname" | grep -iq "metadata.google.internal"; then
 
-  # Add an entry for reaching the metadata server in /etc/hosts.
-  has_metadata_entry=$(egrep '^169\.254\.169\.254' /etc/hosts)
-  if [ -z "$has_metadata_entry" ]; then
-      echo "169.254.169.254 metadata.google.internal  # Added by Google" >> /etc/hosts
+    # --- LOCKING MECHANISM ---
+    # Use the same lock file to prevent collision with the core worker
+    (
+      flock -e 200
+
+      # Clean up old identity entries
+      sed -i '/# Added by Google - Hostname/d' /etc/hosts
+      sed -i '/# Added by Google[[:space:]]*$/d' /etc/hosts
+      # Write IPv4 Identity (Ignore link-local placeholder)
+      if [[ -n "$ip4" && "$ip4" != 169.254.* ]]; then
+        echo "$ip4 $hostname ${hostname%%.*} # Added by Google - Hostname" >> /etc/hosts
+      fi
+
+      # Write IPv6 Identity
+      if [[ -n "$ip6" ]]; then
+        echo "$ip6 $hostname ${hostname%%.*} # Added by Google - Hostname" >> /etc/hosts
+      fi
+    ) 200>/var/lock/google_metadata_network.lock
   fi
 fi
 
