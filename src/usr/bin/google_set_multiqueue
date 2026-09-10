@@ -469,15 +469,15 @@ function try_set_idpf_ring_length() {
   # TX push buff len:	n/a
   # TCP data split:		on
 
-  local -r max_rx=$(echo $"$ethtool_output" | awk '/RX:/{print; exit}')
-  local -r max_tx=$(echo $"$ethtool_output" | awk '/TX:/{print; exit}')
-  local -r current_rx=$(echo $"$ethtool_output" | awk '/RX:/{last=$0} END{print last}')
-  local -r current_tx=$(echo $"$ethtool_output" | awk '/TX:/{last=$0} END{print last}')
+  local -r max_rx=$(echo $"$ethtool_output" | awk '/RX:/{print $2; exit}')
+  local -r max_tx=$(echo $"$ethtool_output" | awk '/TX:/{print $2; exit}')
+  local -r current_rx=$(echo $"$ethtool_output" | awk '/RX:/{last=$2} END{print last}')
+  local -r current_tx=$(echo $"$ethtool_output" | awk '/TX:/{last=$2} END{print last}')
   if [[ $max_rx -lt $IDPF_RX_RING_LENGTH ]]; then
     echo "Reported max RX ring length for $eth_dev is $max_rx, which is less than the desired $IDPF_RX_RING_LENGTH."
     return 1
   fi
-  if [[ $max_tx -lt $IDPF_RX_RING_LENGTH ]]; then
+  if [[ $max_tx -lt $IDPF_TX_RING_LENGTH ]]; then
     echo "Reported max TX ring length for $eth_dev is $max_tx, which is less than the desired $IDPF_TX_RING_LENGTH."
     return 1
   fi
