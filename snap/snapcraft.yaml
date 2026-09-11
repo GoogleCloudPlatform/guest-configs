@@ -1,0 +1,23 @@
+name: basic-snap-test
+version: '0.1'
+summary: Basic test snap for Kokoro and Cloud Build CI
+description: Test snap package to validate automated build, GCS staging, and Daisy image baking.
+confinement: classic
+grade: devel
+base: core24
+
+platforms:
+  amd64:
+    build-on: [amd64]
+    build-for: [amd64]
+
+apps:
+  basic-snap-test:
+    command: src/usr/bin/google_set_hostname
+
+parts:
+  guest-configs:
+    plugin: dump
+    source: .
+    stage:
+      - src/**

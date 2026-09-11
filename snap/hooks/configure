@@ -1,0 +1,10 @@
+#!/bin/bash
+set -e
+
+echo "basic-snap-test: running configure hook..."
+
+STATE_DIR="${SNAP_DATA:-/tmp}"
+mkdir -p "${STATE_DIR}"
+echo "basic-snap-test configured at $(date)" >> "${STATE_DIR}/install.log"
+
+echo "basic-snap-test: configure hook completed successfully."

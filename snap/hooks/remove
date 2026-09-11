@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+# Disable and clean up any systemd units that were enabled during installation
+
+STATE="${SNAP_DATA:-/tmp}/enabled-units"
+
+if [[ -f "${STATE}" ]]; then
+  while IFS= read -r unit; do
+    [[ -z "${unit:-}" ]] && continue
+    systemctl disable --now "${unit}" 2>/dev/null || true
+  done < "${STATE}"
+  rm -f "${STATE}"
+fi

@@ -1,0 +1,64 @@
+#!/bin/bash
+set -e
+
+# Copies files from basic-snap-test:src/ into `/`
+# and enables any necessary systemd units
+
+CONFIGS="${SNAP}/src"
+STATE_DIR="${SNAP_DATA:-/tmp}"
+ENABLED_UNITS="${STATE_DIR}/enabled-units"
+LOGFILE="${STATE_DIR}/install.log"
+
+mkdir --parents "${STATE_DIR}"
+echo "basic-snap-test installed at $(date)" > "${LOGFILE}"
+
+copy_config_files() {
+  if [[ ! -d "${CONFIGS}" ]]; then
+    echo "No files found in ${CONFIGS}" >&2
+    return 0
+  fi
+
+  local tar_opts=("-xpf" "-")
+  if tar --help 2>/dev/null | grep -q -- '--same-owner'; then
+    tar_opts+=("--same-owner")
+  fi
+  if tar --help 2>/dev/null | grep -q -- '--keep-directory-symlink'; then
+    tar_opts+=("--keep-directory-symlink")
+  fi
+
+  tar -C "${CONFIGS}" -cpf - . | tar -C / "${tar_opts[@]}"
+}
+
+enable_systemd_units() {
+  : > "${ENABLED_UNITS}"
+
+  if [[ ! -d "${CONFIGS}" ]]; then
+    return 0
+  fi
+
+  systemctl daemon-reload
+
+  # Collect (unique) unit files' names and pipe into the array `units`
+  pushd "${CONFIGS}" >/dev/null
+  mapfile -d '' units < <(
+    find . -type f \( -name '*.service' -o -name '*.timer' -o -name '*.path' \) \
+      -printf '%f\0' 2>/dev/null | sort -zu || true
+  )
+  popd >/dev/null
+
+  for unit in "${units[@]-}"; do
+    [[ -z "${unit:-}" ]] && continue
+    if systemctl list-unit-files -- "${unit}" >/dev/null 2>&1; then
+      if systemctl enable --now -- "${unit}" >>"${LOGFILE}" 2>&1; then
+        echo "${unit}" >> "${ENABLED_UNITS}"
+      else
+        echo "WARNING! Failed to enable ${unit}..." >>"${LOGFILE}"
+      fi
+    fi
+  done
+}
+
+copy_config_files
+enable_systemd_units
+
+echo "basic-snap-test: install hook completed successfully." >> "${LOGFILE}"
