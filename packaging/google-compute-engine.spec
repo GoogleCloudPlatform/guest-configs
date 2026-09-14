@@ -61,6 +61,7 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %attr(0755,-,-) %{_bindir}/*
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
 %attr(0755,-,-) /etc/NetworkManager/dispatcher.d/google_hostname.sh
+%attr(0755,-,-) /etc/sysconfig/network/scripts/google_up.sh
 %{_udevrulesdir}/*
 %attr(0755,-,-) %{_udevrulesdir}/../google_nvme_id
 %config /etc/dracut.conf.d/*

@@ -1,0 +1,89 @@
+#!/bin/bash
+# Copyright 2026 Google Inc. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This script is used to update the /etc/hosts file with the correct IP address
+# for the metadata server (MDS) and to set the hostname of the instance.
+# Use the same lock file to prevent collision with the core worker
+
+(
+  flock -e 200
+  TRIGGERING_IFACE="${1:-$IFACE}"
+
+  # --- IDENTIFY PRIMARY NIC ---
+  # Dynamically find the interface routing to the internet/MDS (nic0)
+  PRIMARY_IFACE=$(ip route show default | head -n 1 | awk '{print $5}')
+
+  if [[ -z "$PRIMARY_IFACE" ]]; then
+    PRIMARY_IFACE=$(ip -6 route show default | head -n 1 | awk '{print $5}')
+  fi
+
+  if [[ -z "$PRIMARY_IFACE" ]]; then
+    PRIMARY_IFACE=$(ip -br link show | grep -v "lo" | awk 'NR==1{print $1}')
+  fi
+
+  if [[ -z "$PRIMARY_IFACE" ]]; then
+    logger -t google_set_metadata_network "Error: Primary interface not found."
+    exit 100
+  fi
+
+  # Check if the triggering interface is the primary interface
+  if [[ -n "$TRIGGERING_IFACE" ]] && [[ "$TRIGGERING_IFACE" != "$PRIMARY_IFACE" ]]; then
+    # This event was triggered by a secondary NIC (e.g., ens5, eth1).
+    # Exit silently without running compliance checks or changing /etc/hosts.
+    exit 100
+  fi
+
+  # Flush residual blackholes from previous states (if migrating)
+  ip -6 route flush fd20:ce::254/128 2>/dev/null || true
+
+  # --- EVALUATE PRIMARY NIC EXCLUSIVELY ---
+  HAS_REAL_V4="false"
+  # Exclude link-local (169.254.), and ensure valid inet exists
+  if ip -4 addr show dev "$PRIMARY_IFACE" | grep "inet " | grep -v "169\.254\." | grep -q "inet "; then
+    HAS_REAL_V4="true"
+  fi
+
+  HAS_V6="false"
+  # Exclude tentative DAD addresses and link-local addresses
+  if ip -6 addr show dev "$PRIMARY_IFACE" scope global | grep "inet6 " | grep -qv "tentative"; then
+    HAS_V6="true"
+  fi
+  # --- BOOTSTRAP /ETC/HOSTS AND ROUTES ---
+  # Remove old entries or routes not added by this script
+  sed -i '/metadata.google.internal/d' /etc/hosts
+  if [[ "$HAS_REAL_V4" == "true" && "$HAS_V6" == "true" ]]; then
+      echo "169.254.169.254 metadata.google.internal # Added by Google - MDS" >> /etc/hosts
+      # Allow IPv4, Blackhole IPv6 MDS to prevent NM race conditions
+      ip -6 route add unreachable fd20:ce::254/128 2>/dev/null || true
+  elif [[ "$HAS_V6" == "true" ]]; then
+      echo "fd20:ce::254 metadata.google.internal # Added by Google - MDS" >> /etc/hosts
+      echo "169.254.169.254 metadata.google.internal # Added by Google - MDS" >> /etc/hosts
+  else
+      echo "169.254.169.254 metadata.google.internal # Added by Google - MDS" >> /etc/hosts
+  fi
+) 200>/var/lock/google_metadata_network.lock
+
+if [[ $? -ne 0 ]]; then
+  exit 0
+fi
+
+instance=$(curl -m 5 -s -f -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/instance/?recursive=true")
+
+if [[ -n "$instance" ]]; then
+    export GOOGLE_METADATA_JSON="$instance"
+    /usr/bin/google_set_hostname
+else
+    logger -t google_set_metadata_network "Error: Could not retrieve metadata from MDS."
+fi
