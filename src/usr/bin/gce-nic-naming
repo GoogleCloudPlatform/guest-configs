@@ -26,7 +26,8 @@ declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
 declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
-readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
+# 0x1ae0:0x0043 is the vendor and device ID for bare metal gVNIC device
+readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452' '1ae0:0043')
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
 readonly IRDMA_DEVICES_VENDORS=('8086:145c')
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
@@ -512,7 +513,7 @@ function generate_ethernet_name() {
   local name_builder=""
 
   # Diorite NIC
-  if [[ ${eth_device_vendor} == "8086:1452" ]]; then
+  if [[ ${eth_device_vendor} == "8086:1452" ]] || [[ ${eth_device_vendor} == "1ae0:0043" ]]; then
     # Pass the array of keys to find index of this device
     local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
     local old_name=$(basename ${device_path})
