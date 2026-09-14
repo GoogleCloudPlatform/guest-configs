@@ -188,8 +188,8 @@ function is_multinic_accelerator_platform() {
   || "$machine_type" == *"a3-edgegpu-8g"* \
   || "$machine_type" == *"a3-ultragpu-"* \
   || "$machine_type" == *"a4-highgpu-"* \
-  || "$machine_type" == *"a4x-highgpu-"* \
-  || "$machine_type" == *"a4x-maxgpu-"* \
+  || "$machine_type" == *"a4x-"* \
+  || "$machine_type" == *"a5x-"* \
   || "$machine_type" == *"c4n-"* \
   || "$machine_type" == *"c4x-"* ]] || return 1
   return 0
@@ -336,6 +336,12 @@ function set_xps_affinity() {
   local numa="$1"
   local cpus=("${@:2}")
 
+  if [[ "$machine_type" == *"a4x-maxgpu-"* || "$machine_type" == *"a5x-"* ]]; then
+    # We find that setting XPS on these platforms degrades performance.
+    echo "skipping set_xps_affinity"
+    return
+  fi
+
   total_vcpus=${#cpus[@]}
   nics_string=$(get_network_interfaces)
 
@@ -344,6 +350,7 @@ function set_xps_affinity() {
     tx_queue_count=$(ls -1 ${ROOT_DIR}sys/class/net/"$nic"/queues/ | grep tx | wc -l)
 
     if [[ "$machine_type" == *"a4x-"* ]]; then
+      # Implicitly excluding a4x-maxgpu- due to earlier check.
       # All queues on a4x get the full mask.
       for (( queue=0; queue<tx_queue_count; queue++ )); do
         echo "${A4X_ALL_CPUS_MASK}" > "${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus"
