@@ -501,50 +501,26 @@ function run_ip_cmd() {
 #   $2: Index of the ethernet device in ethernet_devices array
 #   $3: Device path of the ethernet device
 # Outputs:
-#   Name of the device (eth0, eth2, rdma4, etc.)
+#   Name of the device (eth0, eth2, etc.)
 #################################
 function generate_ethernet_name() {
   local int_id=$1
   local eth_index=$2
   local device_path=$3
 
-  local eth_device_vendor="${ethernet_devices[${int_id}]}"
-  local name_builder=""
-
   # Diorite NIC
-  if [[ ${eth_device_vendor} == "8086:1452" ]]; then
-    # Pass the array of keys to find index of this device
-    local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
-    local old_name=$(basename ${device_path})
-    local new_name="eth${eth_index}"
-    name_builder="$new_name"
+  local old_name=$(basename ${device_path})
+  local new_name="eth${eth_index}"
 
-    # Temporarily rename to avoid naming collisions: udev will overwrite the
-    # temporary name with the correct, final name
-    if [[ "$new_name" != "$old_name" ]]; then # IDPF NIC
-      notice "Renaming ${old_name} to ${new_name}"
-      run_ip_cmd link set $new_name name "${new_name}tmp"
-    fi
-  elif [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${eth_device_vendor}[[:space:]] ]]; then # RDMA NIC
-    if [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${device_path}/device/${RDMA_TEST_FOLDER}" ]]; then
-      name_builder="rdma${eth_index}"
-    elif [[ "${SUBSYSTEM}" == "net" ]] && [[ -d "${device_path}/device" ]]; then
-      # If this is a VF device and not an RDMA we do not want this device
-      # to claim the eth0 name so give it a PCI path based name instead.
-      #
-      notice "Non RDMA VF NIC. Setting name to path name"
-      name_builder=$ID_NET_NAME_PATH
-    else
-      # If device path is empty it indicates other changes happening so this script will skip
-      error_and_exit "DEVPATH provided is empty, skipping naming. Path:${device_path}"
-    fi
-  else
-    error_and_exit "Ethernet device is not for intent based name: "\
-    "Device vendors: eth:${eth_device_vendor}"
+  # Temporarily rename to avoid naming collisions: udev will overwrite the
+  # temporary name with the correct, final name
+  if [[ "$new_name" != "$old_name" ]]; then # IDPF NIC
+    notice "Renaming ${old_name} to ${new_name}"
+    run_ip_cmd link set $new_name name "${new_name}tmp"
   fi
 
-  notice "eth nic name: ${name_builder} for device_path: ${device_path}"
-  echo ${name_builder}
+  notice "ethernet nic name: ${new_name} for device_path: ${device_path}"
+  echo ${new_name}
 }
 
 #################################
