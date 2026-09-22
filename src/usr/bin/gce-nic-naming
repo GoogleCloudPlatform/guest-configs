@@ -12,7 +12,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the more detailed information.
 #
-# This script is used to generate the network device name for a given device.
+# Invoked by udev to generate deterministic, intent-based network interface
+# names by scanning PCI devices and correlating NICs with attached GPUs.
+# Refer to /lib/udev/rules.d/75-gce-network.rules for more details on the
+# invocation.
+#
+# Outputs the assigned interface name to stdout (or renames via `ip link`):
+#   - eth<N>: IDPF Ethernet NICs (not gVNIC/VirtIO) -> (e.g., eth0, eth1)
+#   - rdma<N>: IDPF RDMA (iRDMA) NICs -> (e.g., rdma0, rdma1)
+#   - gpu<G>rdma<R>: GPU-paired RDMA NICs -> (e.g., gpu0rdma0, gpu0_1rdma0)
 
 
 # Input to test if a directory in the PCI tree exists under the device
