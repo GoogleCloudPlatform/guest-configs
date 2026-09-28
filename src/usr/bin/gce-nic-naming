@@ -11,8 +11,19 @@
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the more detailed information.
+
+# Invoked by udev to generate deterministic, intent-based network interface
+# names by scanning PCI devices and correlating NICs with attached GPUs.
+# Refer to https://github.com/GoogleCloudPlatform/guest-configs/blob/master/src/lib/udev/rules.d/75-gce-network.rules
+# or (/usr)?/lib/udev/rules.d/75-gce-network.rules on a live system for
+# details on the invocation.
 #
-# This script is used to generate the network device name for a given device.
+# Outputs the assigned interface name to stdout.
+# Index order is based on PCI bus order.
+#   - eth<N>: IDPF Ethernet NICs (not gVNIC/VirtIO) -> (e.g., eth0, eth1)
+#   - rdma<N>: IRDMA NICs -> (e.g., rdma0, rdma1)
+#   - gpu<G>rdma<N>: GPU RDMA NICs (MDRMA) -> (e.g., gpu0rdma0, gpu1rdma0)
+#     Where <G> is the GPU index and <N> is the RDMA index for that GPU.
 
 
 # Input to test if a directory in the PCI tree exists under the device
