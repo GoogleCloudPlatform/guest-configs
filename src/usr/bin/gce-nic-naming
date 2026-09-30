@@ -35,9 +35,8 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 # Path to the PCI bus devices
 declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
 declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
-# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
-readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
+readonly ETHERNET_DEVICES_VENDORS=('8086:1452')
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
 readonly IRDMA_DEVICES_VENDORS=('8086:145c')
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
@@ -725,12 +724,20 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     echo ${generated_name}
   else
     # Handle load order where netdev plug happens prior to RDMA plug events
-    dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
+    dev_path="${SYS_PREPEND_PATH}${DEVPATH%/infiniband/*}"
     # Check that device has loaded as a net dev before applying the name.
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
       notice "Renaming iface ${current_net_iface} to ${generated_name}"
       run_ip_cmd link set dev ${current_net_iface} name ${generated_name}
+      # When the RDMA event arrives after the net event, udev has already set
+      # the predictable en* name as the primary interface name (rather than as
+      # an altname). Renaming the primary name via ip link set overwrites it,
+      # so preserve the en* name as an altname for network managers (such as
+      # Ubuntu Netplan/systemd-networkd) that match on en*.
+      if [[ "${current_net_iface}" == en* ]]; then
+        run_ip_cmd link property add dev ${generated_name} altname ${current_net_iface}
+      fi
     fi
   fi
 fi
