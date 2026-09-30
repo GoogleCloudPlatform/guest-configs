@@ -35,9 +35,8 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 # Path to the PCI bus devices
 declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
 declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
-# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
-readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
+readonly ETHERNET_DEVICES_VENDORS=('8086:1452')
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
 readonly IRDMA_DEVICES_VENDORS=('8086:145c')
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
