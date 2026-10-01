@@ -17,7 +17,7 @@
 # persistent disk) using the disk names reported by the metadata server.
 
 # Locations of the script's dependencies
-readonly nvme_cli_bin=/usr/sbin/nvme
+nvme_cli_bin=/usr/sbin/nvme
 
 # Bash regex to parse device paths and controller identification
 readonly PD_CONTROLLER_REGEX="nvme_card-pd"
@@ -221,22 +221,67 @@ function identify_local_ssd_disk() {
   return 0
 }
 
+#######################################
+# Populates the ID_* global variables for a local SSD from the NVMe Identify
+# Namespace vendor extension.
+#
+# identify_local_ssd_disk derives the index arithmetically from the controller
+# and namespace numbers. That works on a VM, where a single "nvme_card"
+# controller exposes each local SSD as its own namespace, but not on Bare Metal
+# (e.g. Z3 Metal), where every physical drive is an independent "nvme_card"
+# controller with nsid=1 and the arithmetic returns 0 for all of them.
+# Firmware instead stamps a stable per-drive name into the Identify Namespace
+# vendor extension, which is what this function reads.
+#
+# This function makes no attempt to decide whether the vendor extension is the
+# right source for a given device; that judgement belongs to the caller. In the
+# udev path it is 65-gce-disk-naming.rules that decides, via its match clauses.
+#
+# Globals:
+#   Populates ID_SERIAL_SHORT, and ID_SERIAL
+# Arguments:
+#   The device path for the disk
+# Returns:
+#   0 if a name was resolved, 1 otherwise. Returning 1 is the ordinary outcome
+#   for any device that does not publish a device name; it is not an error.
+#######################################
+function identify_local_ssd_from_vendor_ext() {
+  local dev_path="$1"
+
+  local dev_name
+  if ! dev_name="$(get_namespace_device_name "$dev_path")"; then
+    return 1
+  fi
+
+  ID_SERIAL_SHORT="$dev_name"
+  ID_SERIAL="Google_EphemeralDisk_${ID_SERIAL_SHORT}"
+  return 0
+}
+
 function print_help_message() {
-  echo "Usage: google_nvme_id [-s] [-h] -d device_path"
+  echo "Usage: google_nvme_id [-s] [-e] [-h] -d device_path"
   echo "  -d <device_path> (Required): Specifies the path to generate a name"
   echo "        for.  This needs to be a path to an nvme device or namespace"
   echo "  -s: Create symbolic link for the disk under /dev/disk/by-id."
   echo "        Otherwise, the disk name will be printed to STDOUT"
+  echo "  -e: Take the local SSD name from the NVMe Identify Namespace vendor"
+  echo "        extension instead of deriving it from the controller and"
+  echo "        namespace numbers.  Prints nothing and exits 0 if the device"
+  echo "        publishes no name, so that callers keep any name they have"
+  echo "        already derived."
   echo "  -h: Print this help message"
 }
 
 function main() {
   local opt_gen_symlink='false'
+  local opt_vendor_ext='false'
   local device_path=''
+  local OPTIND=1
 
-  while getopts :d:sh flag; do
+  while getopts :d:esh flag; do
     case "$flag" in
       d) device_path="$OPTARG";;
+      e) opt_vendor_ext='true';;
       s) opt_gen_symlink='true';;
       h) print_help_message
          return 0
@@ -272,7 +317,21 @@ script as root/with sudo)."
   # Detect the type of attached nvme device
   local controller_id
   controller_id=$("$nvme_cli_bin" id-ctrl "$device_path")
-  if [[ "$controller_id" =~ $PD_CONTROLLER_REGEX ]] ; then
+
+  if [[ "$opt_vendor_ext" == 'true' ]]; then
+    # Name the disk from the Identify Namespace vendor extension, as the caller
+    # asked. This branch makes no judgement of its own about what kind of
+    # device or machine this is; deciding when the vendor extension is the
+    # right source is the caller's job. 65-gce-disk-naming.rules invokes it
+    # only for the single-controller local SSD case.
+    #
+    # Emitting nothing is the ordinary outcome for a device that publishes no
+    # name, and is not an error: udev imports only the keys a program actually
+    # prints, so the caller keeps the name it had.
+    if ! identify_local_ssd_from_vendor_ext "$device_path"; then
+      return 0
+    fi
+  elif [[ "$controller_id" =~ $PD_CONTROLLER_REGEX ]] ; then
     # Fill the global variables for the id command for the given disk type
     # Error messages will be printed closer to error, no need to reprint here
     identify_pd_disk "$device_path"
@@ -301,4 +360,8 @@ script as root/with sudo)."
   return $?
 
 }
-main "$@"
+
+# Give the ability to test the script without running the main logic
+if [[ ! $TEST == 'test' ]]; then
+  main "$@"
+fi

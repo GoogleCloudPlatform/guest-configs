@@ -31,6 +31,9 @@ KERNEL=="nvme*", ATTRS{model}=="nvme_card", ENV{ID_SERIAL}="Google_EphemeralDisk
 # Support for local SSD multi-controller
 KERNEL=="nvme*n*", ATTRS{model}=="nvme_card[0-9]*", IMPORT{program}="google_nvme_id -d $tempnode"
 
+# Bare Metal local SSD naming via NVMe vendor extension
+KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", ATTRS{serial}!="nvme_card*", IMPORT{program}="google_nvme_id -e -d $tempnode"
+
 # NVME Persistent Disk IO Timeout
 KERNEL=="nvme*n*", ENV{DEVTYPE}=="disk", ATTRS{model}=="nvme_card-pd", ATTR{queue/io_timeout}="4294967295"
 
