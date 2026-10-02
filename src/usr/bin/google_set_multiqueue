@@ -48,7 +48,15 @@ fi
 
 function get_metadata() {
   local path="$1"
-  curl -s -m 1 -H "Metadata-Flavor: Google" "http://${METADATA_SERVER}/computeMetadata/v1/${path}"
+  curl -s \
+    --fail \
+    --retry 4 \
+    --retry-connrefused \
+    --retry-max-time 15 \
+    --connect-timeout 1 \
+    --max-time 2 \
+    -H "Metadata-Flavor: Google" \
+    "http://${METADATA_SERVER}/computeMetadata/v1/${path}"
 }
 
 A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
@@ -162,10 +170,16 @@ function set_irq_range_gve() {
 # returns 0 (success) if the all the interfaces contains pnic_id on the Metadats server.
 function contains_pnic_ids() {
   local interfaces=$(get_metadata "instance/network-interfaces/")
+
+  # If there are somehow no interfaces, then we don't have any pnic ids!
+  if [[ -z "$interfaces" ]]; then
+    return 1
+  fi
+
   for interface in $interfaces; do
     echo "Interface: $interface"
 
-    network_interfaces_mds_attributes=$(get_metadata "instance/network-interfaces/$interface/")
+    local network_interfaces_mds_attributes=$(get_metadata "instance/network-interfaces/$interface/")
 
     if ! echo "$network_interfaces_mds_attributes" | grep -q "physical-nic-id"; then
       echo "physical-nic-id NOT found in interface $interface"
