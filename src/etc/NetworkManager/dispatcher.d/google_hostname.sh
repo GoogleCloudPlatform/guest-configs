@@ -17,6 +17,7 @@ ACTION="$2"
 # Only execute on 'up' or 'dhcp-change' events
 if [[ "$ACTION" != "up" && "$ACTION" != "dhcp4-change" && "$ACTION" != "dhcp6-change" && "$ACTION" != "reapply" ]]; then
     exit 0
+fi
 # Execute in the background with severed file descriptors (>/dev/null 2>&1 &)
 # to avoid blocking NetworkManager dispatcher transitions on MDS queries or
 # network latency. Concurrency is handled by locking in google_set_metadata_network.
