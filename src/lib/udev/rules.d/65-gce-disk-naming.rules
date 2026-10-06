@@ -23,7 +23,7 @@ KERNEL=="sd*|vd*", IMPORT{program}="scsi_id --export --whitelisted -d $tempnode"
 # Don't symlink if it's not our devices. This is a fail-safe against these rules
 # running outside of GCP.
 KERNEL=="sd*|vd*", ENV{ID_VENDOR}!="Google", GOTO="gce_disk_naming_end"
-KERNEL=="nvme*", ATTRS{model}!="nvme_card*", GOTO="gce_disk_naming_end"
+KERNEL=="nvme*", ATTRS{model}!="nvme_card*", GOTO="gce_micron_nvme_naming"
 
 # NVME Local SSD naming
 KERNEL=="nvme*n*", ATTRS{model}=="nvme_card", PROGRAM="/bin/sh -c 'nsid=$$(echo %k|sed -re s/nvme[0-9]+n\([0-9]+\).\*/\\1/); echo $$((nsid-1))'", ENV{ID_SERIAL_SHORT}="local-nvme-ssd-%c"
@@ -39,8 +39,16 @@ KERNEL=="nvme*n*", ENV{DEVTYPE}=="disk", ATTRS{model}=="nvme_card-pd", ATTR{queu
 
 # NVME Persistent Disk Naming
 KERNEL=="nvme*n*", ATTRS{model}=="nvme_card-pd", IMPORT{program}="google_nvme_id -d $tempnode"
+GOTO="gce_disk_naming_symlinks"
+
+# Direct-attached NVMe Local SSD naming (e.g., Micron 0x1344 on A5X Metal)
+LABEL="gce_micron_nvme_naming"
+KERNEL=="nvme*n*", ATTRS{vendor}=="0x1344", IMPORT{program}="google_nvme_id -o -d $tempnode"
+KERNEL=="nvme*", ATTRS{vendor}=="0x1344", GOTO="gce_disk_naming_symlinks"
+GOTO="gce_disk_naming_end"
 
 # Symlinks
+LABEL="gce_disk_naming_symlinks"
 KERNEL=="sd*|vd*|nvme*", ENV{DEVTYPE}=="disk", SYMLINK+="disk/by-id/google-$env{ID_SERIAL_SHORT}"
 KERNEL=="sd*|vd*|nvme*", ENV{DEVTYPE}=="partition", SYMLINK+="disk/by-id/google-$env{ID_SERIAL_SHORT}-part%n"
 
