@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # Copyright 2024 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,18 +27,17 @@
 #     Where <G> is the GPU index and <N> is the RDMA index for that GPU.
 
 
-# Input to test if a directory in the PCI tree exists under the device
-declare DEVICE_DRIVER="$1"
-
 # Generate a instance specific tag for logging to journal
 readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 
 # Path to the PCI bus devices
 declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
 declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
-# 0x8086:0x145c is the vendor and device ID for Intel IDPF VF
+declare OS_RELEASE_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/etc/os-release"
+declare PROC_CMDLINE_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/proc/cmdline"
 # 0x8086:0x1452 is the vendor and device ID for Intel NIC
-readonly ETHERNET_DEVICES_VENDORS=('8086:145c' '8086:1452')
+# 0x1ae0:0x0042 is the vendor and device ID for gVNIC device
+readonly ETHERNET_DEVICES_VENDORS=('8086:1452' '1ae0:0042')
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
 readonly IRDMA_DEVICES_VENDORS=('8086:145c')
 # 0x15b3:0x101e is the vendor and device ID for Mellanox CX7
@@ -505,6 +505,25 @@ function run_ip_cmd() {
 }
 
 #################################
+# Check whether ethernet devices should be named by gce-nic-naming
+#
+# Globals:
+#   OS_RELEASE_PATH: Path to /etc/os-release
+#   PROC_CMDLINE_PATH: Path to /proc/cmdline
+# Returns:
+#   0 if running on COS or net.ifnames=0 is set, 1 otherwise
+#################################
+function should_name_ethernet_devices() {
+  if [[ -f "${OS_RELEASE_PATH}" ]] && [[ "$(< "${OS_RELEASE_PATH}")" =~ (^|$'\n')ID=[\"\']?cos[\"\']?($|$'\n') ]]; then
+    return 0
+  fi
+  if [[ -f "${PROC_CMDLINE_PATH}" ]] && [[ "$(< "${PROC_CMDLINE_PATH}")" =~ (^|[[:space:]])net\.ifnames=0($|[[:space:]]) ]]; then
+    return 0
+  fi
+  return 1
+}
+
+#################################
 # Generate the ethernet name of the device based on the vendor
 #
 # Arguments:
@@ -512,7 +531,7 @@ function run_ip_cmd() {
 #   $2: Index of the ethernet device in ethernet_devices array
 #   $3: Device path of the ethernet device
 # Outputs:
-#   Name of the device (eth0, eth2, etc.)
+#   Name of the device (eth0, eth1, etc.)
 #################################
 function generate_ethernet_name() {
   local int_id=$1
@@ -521,13 +540,25 @@ function generate_ethernet_name() {
 
   # Diorite NIC
   local old_name=$(basename ${device_path})
-  local new_name="eth${eth_index}"
+  if [[ ${eth_index} -eq 0 ]]; then
+    local new_name="eth0"
+    if [[ "${old_name}" != "eth0" ]]; then
+      notice "Acquiring ${new_name} for ${old_name}"
+      # Rely on udev uevent timeout if eth0 cannot be acquired.
+      while ! run_ip_cmd link set "${old_name}" name "${new_name}"; do
+        sleep 0.1
+      done
+    fi
+    notice "ethernet nic name: ${new_name} for device_path: ${device_path}"
+    echo ${new_name}
+    return
+  fi
 
-  # Temporarily rename to avoid naming collisions: udev will overwrite the
-  # temporary name with the correct, final name
-  if [[ "$new_name" != "$old_name" ]]; then # IDPF NIC
-    notice "Renaming ${old_name} to ${new_name}"
-    run_ip_cmd link set $new_name name "${new_name}tmp"
+  local new_name="${old_name}"
+  if [[ "${old_name}" == "eth0" ]]; then
+    notice "Renaming ${old_name} to next available eth*"
+    run_ip_cmd link set "${old_name}" name "eth%d"
+    new_name=$(ls "${device_path%/*}" 2>/dev/null)
   fi
 
   notice "ethernet nic name: ${new_name} for device_path: ${device_path}"
@@ -662,14 +693,6 @@ function generate_name() {
   get_id_from_path "${device_path}" int_id
   debug "Path discovered int_id: ${int_id}"
 
-  # Pass the array of keys to find index of this device
-  local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
-  debug "ethernet device index: ${eth_index}"
-  if [[ ${eth_index} -ne -1 ]]; then
-    echo $(generate_ethernet_name ${int_id} ${eth_index} ${device_path})
-    return
-  fi
-
   local -i irdma_index=$(get_index ${int_id} "${!irdma_devices[@]}")
   debug "irdma device index: ${irdma_index}"
   if [[ ${irdma_index} -ne -1 ]]; then
@@ -684,22 +707,29 @@ function generate_name() {
     return
   fi
 
+  # Pass the array of keys to find index of this device
+  local -i eth_index=$(get_index ${int_id} "${!ethernet_devices[@]}")
+  debug "ethernet device index: ${eth_index}"
+
   # If device is not in ethernet_devices or gpu_nic_devices, check if it is a
   # CX VF in baremetal.
   local physfn_path=$(readlink -f "${device_path}/device/physfn")
-  if [[ -d "${physfn_path}" ]]; then
-    echo $(generate_gpu_nic_name_has_physfn ${int_id} ${device_path} ${physfn_path})
+  if [[ ${eth_index} -eq -1 && -d "${physfn_path}" ]]; then
+    local -i physfn_int_id
+    get_id_from_path "${physfn_path}" physfn_int_id
+    if [[ $(get_index ${physfn_int_id} "${!gpu_nic_devices[@]}") -ne -1 ]]; then
+      echo $(generate_gpu_nic_name_has_physfn ${int_id} ${device_path} ${physfn_path})
+      return
+    fi
+  fi
+
+  if [[ ${#ethernet_devices[@]} -gt 0 ]] && should_name_ethernet_devices; then
+    echo $(generate_ethernet_name ${int_id} ${eth_index} ${device_path})
     return
   fi
 
   error_and_exit "Device is not for intent based name: ${device_path}"
 }
-
-# Intel VF driver and needs special handling to determine if name should be
-# RDMA related
-if [[ "${DEVICE_DRIVER}" == "idpf" ]]; then
-  RDMA_TEST_FOLDER="infiniband"
-fi
 
 # Give the ability to test the script without running the main logic
 if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
@@ -719,13 +749,13 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
       determine_index_ratios
   fi
 
-  generated_name=$(generate_name "${SYS_PREPEND_PATH}${DEVPATH}")
+  generated_name=$(generate_name "${SYS_PREPEND_PATH}${DEVPATH}") || exit 1
 
   if [[ "$SUBSYSTEM" == "net" ]]; then
     echo ${generated_name}
   else
     # Handle load order where netdev plug happens prior to RDMA plug events
-    dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
+    dev_path="${SYS_PREPEND_PATH}${DEVPATH%/infiniband/*}"
     # Check that device has loaded as a net dev before applying the name.
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
