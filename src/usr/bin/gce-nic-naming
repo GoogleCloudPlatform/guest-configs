@@ -725,7 +725,7 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
     echo ${generated_name}
   else
     # Handle load order where netdev plug happens prior to RDMA plug events
-    dev_path="${SYS_PREPEND_PATH}${DEVPATH}/.."
+    dev_path="${SYS_PREPEND_PATH}${DEVPATH%/infiniband/*}"
     # Check that device has loaded as a net dev before applying the name.
     if [[ -d "$dev_path/net/" ]]; then
       current_net_iface="$(ls $dev_path/net/)"
