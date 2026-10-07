@@ -49,17 +49,54 @@
   ip -6 route flush fd20:ce::254/128 2>/dev/null || true
 
   # --- EVALUATE PRIMARY NIC EXCLUSIVELY ---
-  HAS_REAL_V4="false"
   # Exclude link-local (169.254.), and ensure valid inet exists
-  if ip -4 addr show dev "$PRIMARY_IFACE" | grep "inet " | grep -v "169\.254\." | grep -q "inet "; then
-    HAS_REAL_V4="true"
-  fi
+  has_real_ipv4() {
+    ip -4 addr show dev "$PRIMARY_IFACE" |
+      grep "inet " |
+      grep -v "169\.254\." |
+      grep -q "inet "
+  }
 
+  # Check whether the primary interface has a usable global IPv6 address.
+  # IPv6 addresses may initially be marked tentative while Duplicate Address
+  # Detection (DAD) is in progress.
+  has_ready_ipv6() {
+    ip -6 addr show dev "$PRIMARY_IFACE" scope global |
+      grep "inet6 " |
+      grep -qv "tentative"
+  }
+
+  has_tentative_ipv6() {
+    ip -6 addr show dev "$PRIMARY_IFACE" scope global |
+      grep "inet6 " |
+      grep -q "tentative"
+  }
+
+  # Dispatchers can fire before the primary interface has settled:
+  #   - a global IPv6 address may still be tentative while DAD runs, or
+  #   - only the link-local DHCPv4 lease is present and DHCPv6/SLAAC has not
+  #     completed yet (e.g. after `netplan apply` on multi-NIC VMs, b/571200124).
+  # In both cases the stack type cannot be determined yet, so poll briefly
+  # (up to 5s) before deciding. Treating an IPv6-only interface as IPv4-only
+  # would leave metadata.google.internal unresolvable.
+  HAS_REAL_V4="false"
   HAS_V6="false"
-  # Exclude tentative DAD addresses and link-local addresses
-  if ip -6 addr show dev "$PRIMARY_IFACE" scope global | grep "inet6 " | grep -qv "tentative"; then
-    HAS_V6="true"
-  fi
+  for _ in {1..10}; do
+    if has_real_ipv4; then
+      HAS_REAL_V4="true"
+    fi
+    if has_ready_ipv6; then
+      HAS_V6="true"
+      break
+    fi
+    # The stack is known once a global IPv4 address is present and no IPv6
+    # address is undergoing DAD; otherwise keep waiting.
+    if [[ "$HAS_REAL_V4" == "true" ]] && ! has_tentative_ipv6; then
+      break
+    fi
+    sleep 0.5
+  done
+
   # --- BOOTSTRAP /ETC/HOSTS AND ROUTES ---
   # Remove old entries or routes not added by this script
   sed -i '/metadata.google.internal/d' /etc/hosts
