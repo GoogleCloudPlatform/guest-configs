@@ -535,24 +535,38 @@ function generate_ethernet_name() {
 }
 
 #################################
-# Generate the irdma name of the device based on the vendor
+# Rename the irdma device to the next available rdma* name and return the new
+# name.
 #
 # Arguments:
 #   $1: Vendor of the irdma device
 #   $2: Index of the irdma device in irdma_devices array
 #   $3: Device path of the irdma device
 # Outputs:
-#   Name of the device (rdma0, rdma1, etc.)
+#   New name of the device (rdma0, rdma1, etc.)
 #################################
 function generate_irdma_name() {
   local int_id=$1
   local irdma_index=$2
   local device_path=$3
 
-  local name_builder="rdma${irdma_index}"
+  local net_dir="${device_path%/*}"
+  if [[ "${device_path}" == *"/infiniband/"* ]]; then
+    net_dir="${device_path%/infiniband/*}/net"
+  elif [[ -d "${device_path}/net" ]]; then
+    net_dir="${device_path}/net"
+  fi
 
-  notice "irdma nic name: ${name_builder} for device_path: ${device_path}"
-  echo ${name_builder}
+  local old_name=$(ls "${net_dir}" 2>/dev/null)
+  local new_name="${old_name}"
+  if [[ -n "${old_name}" && ! "${old_name}" =~ ^rdma[0-9]+$ ]]; then
+    notice "Renaming ${old_name} to next available rdma*"
+    run_ip_cmd link set dev "${old_name}" name "rdma%d"
+    new_name=$(ls "${net_dir}" 2>/dev/null)
+  fi
+
+  notice "irdma nic name: ${new_name} for device_path: ${device_path}"
+  echo ${new_name}
 }
 
 #################################
@@ -723,14 +737,5 @@ if [[ ! $TEST == 'test' ]] && [[ ! "${GCE_NIC_NAMING}" == "disable" ]]; then
 
   if [[ "$SUBSYSTEM" == "net" ]]; then
     echo ${generated_name}
-  else
-    # Handle load order where netdev plug happens prior to RDMA plug events
-    dev_path="${SYS_PREPEND_PATH}${DEVPATH%/infiniband/*}"
-    # Check that device has loaded as a net dev before applying the name.
-    if [[ -d "$dev_path/net/" ]]; then
-      current_net_iface="$(ls $dev_path/net/)"
-      notice "Renaming iface ${current_net_iface} to ${generated_name}"
-      run_ip_cmd link set dev ${current_net_iface} name ${generated_name}
-    fi
   fi
 fi
