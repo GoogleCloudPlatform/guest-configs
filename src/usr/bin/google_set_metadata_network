@@ -56,8 +56,8 @@
   fi
 
   HAS_V6="false"
-  # Exclude tentative DAD addresses and link-local addresses
-  if ip -6 addr show dev "$PRIMARY_IFACE" scope global | grep "inet6 " | grep -qv "tentative"; then
+  # Exclude tentative DAD addresses
+  if ip -6 addr show dev "$PRIMARY_IFACE" | grep "inet6 " | grep -qv "tentative"; then
     HAS_V6="true"
   fi
   # --- BOOTSTRAP /ETC/HOSTS AND ROUTES ---
