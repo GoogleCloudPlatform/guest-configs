@@ -59,7 +59,6 @@ function get_metadata() {
     "http://${METADATA_SERVER}/computeMetadata/v1/${path}"
 }
 
-A4X_ALL_CPUS_MASK="0000ffff,ffffffff,ffffffff,ffffffff,ffffffff"
 IDPF_RX_RING_LENGTH="4096"
 IDPF_TX_RING_LENGTH="4096"
 IDPF_DEFAULT_RING_LENGTH="512"
@@ -151,16 +150,7 @@ function set_irq_range_gve() {
     echo "$core" > "${ROOT_DIR}proc/irq/${rx_irq}/smp_affinity_list"
     echo "rx_irq: ${rx_irq}, assigned irq core: $(cat "${ROOT_DIR}proc/irq/${rx_irq}/smp_affinity_list")" >&2
 
-    # Check if the queue exists at present because the number of IRQs equals
-    # the max number of queues allocated and could be greater than the current
-    # number of queues.
-    tx_queue=${ROOT_DIR}sys/class/net/"$nic"/queues/tx-"$irq"
-    if ls $tx_queue 1> /dev/null 2>&1; then
-      echo -en "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
-      echo -e " \txps_cpus bind to $(cat $tx_queue/xps_cpus)" >&2
-    else
-      echo -e "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
-    fi
+    echo -e "$nic:q-$irq: \ttx: irq $tx_irq bind to $core \trx: irq $rx_irq bind to $core" >&2
 
   done
 
@@ -265,161 +255,8 @@ function unpack_cpu_ranges() {
     done
 }
 
-# Converts a hexadecimal bitmap to rangelist
-# ex. bitmap=00000000,00000000,00fff000,000003ff CPUs=0-9,44-55
-function bitmap_to_rangelist() { # bitmap
-  local bitmap="${1:-}" # must be non empty, only hex digits and commas
-
-  [[ "${bitmap}" =~ ^[0-9a-fA-F,]+$ ]] || return 1
-  bitmap="${bitmap//,/}"                # remove commas
-
-  local comma='' ret=''
-  local bit=0 l=-1 h=0 # current bit and range boundaries
-  local i j # process one character at a time starting from right (low index)
-  for ((i = ${#bitmap} - 1; i >= 0; i--)); do
-    local cur="0x${bitmap:${i}:1}"
-    for ((j = 0; j < 4; j++, bit++, cur >>= 1)); do
-      (( cur & 1 )) || continue                             # bit is 0
-      (( l < 0 )) && (( l = bit, h = bit, 1 )) && continue  # first bit
-      (( bit == h + 1 )) && (( h = bit, 1 )) && continue    # extend range
-      ret+="${comma}${l}" ; (( l != h )) && ret+="-${h}"    # add range
-      (( l = bit, h = bit ))                                # start new interval
-      comma=","
-    done
-  done
-  (( l < 0 )) && return
-  ret+="${comma}${l}"; (( l != h )) && ret+="-${h}"         # add final entry
-  echo $ret
-}
-
-# Converts a list of CPUs to a hexadecimal bitmap
-# ex. CPUs=[0,1,2,3,4,5,6,7,8,9,44,45,46,47,48,49,50,51,52,53,54,55]
-# bitmap=00000000,00000000,00fff000,000003ff
-function rangelist_to_bitmap() { # list highest_cpu
-  local ranges="${1:-}" # can be empty, only digits, commas and dash
-  local highest=${2:-1} # highest CPU
-  [[ "${ranges}" =~ ^[0-9,-]*$ ]] || return 1
-  ranges="${ranges//,/ }"       # replace comma with space
-
-  local digits=()
-  local range i l h
-  for range in $ranges; do
-    read l h <<< $(echo ${range/-/ })
-    [[ -z "$h" ]] && h=l
-    for ((i = l; i <= h; i++)) { (( digits[i / 4] |= 1 << (i & 3) )); }
-    (( highest = h > highest ? h : highest))
-  done
-
-  # Print in reverse order with commas
-  local ret="" hex="0123456789abcdef"
-  (( h = (highest + 31) / 32 * 8 )) # make a multiple of 32 CPUs
-  for (( i = h - 1; i >= 0; i--)) ; do
-    ret+="${hex:${digits[$i]}:1}"
-    (( i & 7 || i == 0)) || ret+=","
-  done
-  echo $ret
-}
-
-# Returns all the network interface names excluding "lo"
-get_network_interfaces() {
-    local network_interfaces=()
-
-    for nic_dir in ${ROOT_DIR}sys/class/net/*; do
-        local nic_name=$(basename "${nic_dir}")
-
-        if [[ "${nic_name}" == "lo" || ! -e "${nic_dir}/device" ]]; then
-            continue
-        fi
-
-        network_interfaces+=("${nic_name}")
-    done
-
-    echo "${network_interfaces[@]}"
-}
-
 function get_pci_network_interfaces() {
   find ${ROOT_DIR}sys/class/net -type l | xargs -L 1 realpath | grep '/sys/devices/pci' | sort | xargs -L 1 basename
-}
-
-# For XPS affinity configuration, we'd do the following assignment:
-# 1. For each interface, divide the queues into two halves
-# 2. Evenly distribute the vCPUs on NUMA0 to the first half of the queues
-# 3. Evenly distribute the vCPUs on NUMA1 to the second half of the queues
-# This function will have to be called once for each NUMA.
-function set_xps_affinity() {
-  local numa="$1"
-  local cpus=("${@:2}")
-
-  if [[ "$machine_type" == *"a4x-maxgpu-"* || "$machine_type" == *"a5x-"* ]]; then
-    # We find that setting XPS on these platforms degrades performance.
-    echo "skipping set_xps_affinity"
-    return
-  fi
-
-  total_vcpus=${#cpus[@]}
-  nics_string=$(get_network_interfaces)
-
-  IFS=' ' read -r -a nics <<< "$nics_string"
-  for nic in "${nics[@]}"; do
-    tx_queue_count=$(ls -1 ${ROOT_DIR}sys/class/net/"$nic"/queues/ | grep tx | wc -l)
-
-    if [[ "$machine_type" == *"a4x-"* ]]; then
-      # Implicitly excluding a4x-maxgpu- due to earlier check.
-      # All queues on a4x get the full mask.
-      for (( queue=0; queue<tx_queue_count; queue++ )); do
-        echo "${A4X_ALL_CPUS_MASK}" > "${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus"
-      done
-      continue
-    fi
-
-    if [[ $num_numa_nodes -le $tx_queue_count ]]; then
-      # the number of queues to assign CPUs for this NUMA node.
-      queues_per_numa=$(( tx_queue_count / num_numa_nodes ))
-
-      # the number of CPUs to assign per queue
-      cpus_per_queue=$(( total_vcpus / queues_per_numa))
-
-      echo "nic=$nic tx_queue_count=$tx_queue_count queues_per_numa=$queues_per_numa cpus_per_queue=$cpus_per_queue"
-
-      cpu_index=0
-      queue_offset=$(( queues_per_numa*numa ))
-      for (( queue=queue_offset; queue<queue_offset+queues_per_numa; queue+=1 )); do
-        xps_path=${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus
-        xps_cpus=""
-
-        # Assign all the remaining CPUs to the last queue
-        if [[ queue -eq $(( queue_offset + queues_per_numa - 1 )) ]]; then
-          cpus_per_queue=$(( total_vcpus - cpu_index ))
-        fi
-
-        for (( i=0; i<cpus_per_queue; i+=1 )); do
-          xps_cpus+="${cpus[cpu_index]},"
-          cpu_index=$(( cpu_index + 1 ))
-        done
-
-        # remove the last ","
-        xps_cpus="${xps_cpus%,}"
-        cpu_mask=$(rangelist_to_bitmap "$xps_cpus" "$(nproc)")
-        echo ${cpu_mask} > $xps_path
-      done
-    else
-      # num_numa_nodes > tx_queue_count.
-      # multiple NUMA nodes share a queue. We append to the mask.
-      queue=$(( numa % tx_queue_count ))
-      xps_path=${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus
-
-      current_mask=$(cat "$xps_path" 2>/dev/null || echo "0")
-      current_rangelist=$(bitmap_to_rangelist "$current_mask" 2>/dev/null || echo "")
-
-      # Flatten cpus array to comma-separated list
-      new_cpus_list=$(IFS=,; echo "${cpus[*]}")
-      ranges="${current_rangelist},${new_cpus_list}"
-      ranges="${ranges#,}"
-
-      cpu_mask=$(rangelist_to_bitmap "$ranges" "$(nproc)")
-      echo ${cpu_mask} > $xps_path
-    fi
-  done
 }
 
 function try_set_idpf_channels() {
@@ -652,16 +489,6 @@ fi
 
 num_numa_nodes=$(ls -d ${ROOT_DIR}sys/devices/system/node/node* | wc -l)
 echo "Found ${num_numa_nodes} NUMA nodes."
-
-for ((node=0; node<num_numa_nodes; node++)); do
-  ranges=$(get_vcpu_ranges "$node")
-  dec_ranges=()
-  unpack_cpu_ranges "${ranges}" dec_ranges
-
-  echo -e "\nConfiguring XPS affinity for devices on NUMA ${node}"
-  echo -e "vCPUs on NUMA${node} [${dec_ranges[@]}]"
-  set_xps_affinity "$node" "${dec_ranges[@]}"
-done
 
 # Assign IRQ binding for network interfaces based on pci bus ordering.
 # Avoid setting binding IRQ on vCPU 0 as it is a busy vCPU being heavily
