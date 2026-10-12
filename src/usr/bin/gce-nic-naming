@@ -33,6 +33,8 @@ readonly LOG_TAG=${LOG_TAG:-"gce-nic-naming_$$"}
 # Path to the PCI bus devices
 declare PCI_BUS_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys/bus/pci/devices"
 declare SYS_PREPEND_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/sys"
+declare OS_RELEASE_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/etc/os-release"
+declare PROC_CMDLINE_PATH="${GCE_NIC_NAMING_FAKEROOT:-}/proc/cmdline"
 # 0x8086:0x1452 is the vendor and device ID for Intel IDPF PF
 readonly ETHERNET_DEVICES_VENDORS=('8086:1452')
 # 0x8086:0x145c is the vendor and device ID for Intel IDPF VF for RDMA
@@ -502,6 +504,25 @@ function run_ip_cmd() {
 }
 
 #################################
+# Check whether ethernet devices should be named by gce-nic-naming
+#
+# Globals:
+#   OS_RELEASE_PATH: Path to /etc/os-release
+#   PROC_CMDLINE_PATH: Path to /proc/cmdline
+# Returns:
+#   0 if running on COS or net.ifnames=0 is set, 1 otherwise
+#################################
+function should_name_ethernet_devices() {
+  if [[ -f "${OS_RELEASE_PATH}" ]] && [[ "$(< "${OS_RELEASE_PATH}")" =~ (^|$'\n')ID=[\"\']?cos[\"\']?($|$'\n') ]]; then
+    return 0
+  fi
+  if [[ -f "${PROC_CMDLINE_PATH}" ]] && [[ "$(< "${PROC_CMDLINE_PATH}")" =~ (^|[[:space:]])net\.ifnames=0($|[[:space:]]) ]]; then
+    return 0
+  fi
+  return 1
+}
+
+#################################
 # Generate the ethernet name of the device based on the vendor
 #
 # Arguments:
@@ -723,7 +744,7 @@ function generate_name() {
   # Catch-all block for all devices not handled above (e.g. RDMA, CX PFs/VFs)
   # when IDPF ethernet devices are present; must remain last so PF0 acquires
   # eth0 and any other device occupying eth0 is renamed off it.
-  if [[ ${#ethernet_devices[@]} -gt 0 ]]; then
+  if [[ ${#ethernet_devices[@]} -gt 0 ]] && should_name_ethernet_devices; then
     echo $(generate_ethernet_name ${int_id} ${eth_index} ${device_path})
     return
   fi
