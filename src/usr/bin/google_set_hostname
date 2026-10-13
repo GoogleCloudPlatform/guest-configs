@@ -51,23 +51,25 @@ if [ -n "$GOOGLE_METADATA_JSON" ]; then
   if [ -n "$hostname" ] && ! echo "$hostname" | grep -iq "metadata.google.internal"; then
 
     # --- LOCKING MECHANISM ---
-    # Use the same lock file to prevent collision with the core worker
+    # Use the same lock file to prevent collision with the core worker.
+    # Use single-digit FD 9 because Ubuntu/Debian /sbin/dhclient-script sources
+    # this script via /bin/sh (dash), which rejects multi-digit FDs like 200>.
     (
-      flock -e 200
+      flock -e 9
 
       # Clean up old identity entries
       sed -i '/# Added by Google - Hostname/d' /etc/hosts
       sed -i '/# Added by Google[[:space:]]*$/d' /etc/hosts
       # Write IPv4 Identity (Ignore link-local placeholder)
-      if [[ -n "$ip4" && "$ip4" != 169.254.* ]]; then
+      if [ -n "$ip4" ] && [ "${ip4#169.254.}" = "$ip4" ]; then
         echo "$ip4 $hostname ${hostname%%.*} # Added by Google - Hostname" >> /etc/hosts
       fi
 
       # Write IPv6 Identity
-      if [[ -n "$ip6" ]]; then
+      if [ -n "$ip6" ]; then
         echo "$ip6 $hostname ${hostname%%.*} # Added by Google - Hostname" >> /etc/hosts
       fi
-    ) 200>/var/lock/google_metadata_network.lock
+    ) 9>/var/lock/google_metadata_network.lock
   fi
 fi
 
