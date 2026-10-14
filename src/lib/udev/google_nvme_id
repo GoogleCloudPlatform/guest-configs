@@ -18,6 +18,8 @@
 
 # Locations of the script's dependencies
 nvme_cli_bin=/usr/sbin/nvme
+sysfs_nvme_class_dir=/sys/class/nvme
+sysfs_pci_devices_dir=/sys/bus/pci/devices
 
 # Bash regex to parse device paths and controller identification
 readonly PD_CONTROLLER_REGEX="nvme_card-pd"
@@ -258,8 +260,127 @@ function identify_local_ssd_from_vendor_ext() {
   return 0
 }
 
+#######################################
+# Populates the ID_* global variables by naming a bare-metal Local SSD after
+# the lexicographical position of its serial number among all NVMe drives that
+# share its PCI vendor ID.
+#
+# Only relevant for bare-metal instances whose Local SSDs have neither an
+# "nvme_card*" model nor a device name in the Identify Namespace vendor
+# extension. A drive's vendor ID and serial number never change, so sorting
+# the serials yields a stable 0-based index for each drive.
+#
+# No name is assigned unless every NVMe PCI function with the drive's vendor ID
+# has registered a controller with a serial number: an incomplete list would
+# shift the indices and attach symlinks to the wrong drives.
+#
+# Globals:
+#   Uses sysfs_nvme_class_dir, sysfs_pci_devices_dir
+#   Populates ID_SERIAL_SHORT, and ID_SERIAL
+# Arguments:
+#   The nvme id-ctrl output for the disk
+#   The device path for the disk
+# Returns:
+#   0 on success and 1 if an error occurs
+#######################################
+function identify_local_ssd_by_serial() {
+  local dev_model="$1"
+  local dev_path="$2"
+
+  local target_sn
+  target_sn="$(echo "$dev_model" | awk '/^sn[[:space:]]*:/ {print $3}' | tr -d '[:space:]')"
+  if [[ -z "$target_sn" ]]; then
+    err "Failed to extract serial number from id-ctrl for $dev_path"
+    return 1
+  fi
+
+  local target_vid
+  target_vid="$(echo "$dev_model" | awk '/^vid[[:space:]]*:/ {print $3}' | tr -d '[:space:]')"
+  if [[ -z "$target_vid" ]]; then
+    err "Failed to extract vendor ID from id-ctrl for $dev_path"
+    return 1
+  fi
+
+  # Count the NVMe PCI functions (class 0x010802) with the same vendor ID. This
+  # is the number of Local SSDs the scan below must find; any that are still
+  # probing at boot have no NVMe controller yet.
+  local expected_count=0
+  local pci_dir
+  for pci_dir in "$sysfs_pci_devices_dir"/*; do
+    local pci_vendor pci_class
+    pci_vendor="$(cat "$pci_dir/vendor" 2>/dev/null | tr -d '[:space:]')"
+    pci_class="$(cat "$pci_dir/class" 2>/dev/null | tr -d '[:space:]')"
+    if [[ "${pci_vendor,,}" == "${target_vid,,}" && "${pci_class,,}" == "0x010802" ]]; then
+      expected_count=$((expected_count + 1))
+    fi
+  done
+  if [[ "$expected_count" -eq 0 ]]; then
+    err "No NVMe PCI functions with vendor ID $target_vid found for $dev_path"
+    return 1
+  fi
+
+  # Wait up to 5 seconds for every Local SSD controller to register at boot.
+  local -a all_serials=()
+  local attempt
+  for (( attempt=1; attempt<=50; attempt++ )); do
+    all_serials=()
+    for ctrl_dir in "$sysfs_nvme_class_dir"/nvme*; do
+      [[ -d "$ctrl_dir" ]] || continue
+      local ctrl_model
+      ctrl_model="$(cat "$ctrl_dir/model" 2>/dev/null | tr -d '[:space:]')"
+      # Skip Google virtual NVMe controllers (e.g. the "nvme_card-pd"
+      # Persistent Disk) so they can never take a Local SSD index.
+      if [[ "$ctrl_model" == nvme_card* ]]; then
+        continue
+      fi
+      local ctrl_vendor
+      ctrl_vendor="$(cat "$ctrl_dir/device/vendor" 2>/dev/null | tr -d '[:space:]')"
+      if [[ "${ctrl_vendor,,}" != "${target_vid,,}" ]]; then
+        continue
+      fi
+      local sn
+      sn="$(cat "$ctrl_dir/serial" 2>/dev/null | tr -d '[:space:]')"
+      if [[ -n "$sn" ]]; then
+        all_serials+=("$sn")
+      fi
+    done
+    if [[ "${#all_serials[@]}" -ge "$expected_count" ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+
+  if [[ "${#all_serials[@]}" -lt "$expected_count" ]]; then
+    err "Found ${#all_serials[@]} of $expected_count Local SSD serial numbers \
+for vendor ID $target_vid; not naming $dev_path"
+    return 1
+  fi
+
+  # Sort serial numbers to assign deterministic 0-based index
+  local -a sorted_serials=()
+  mapfile -t sorted_serials < <(printf "%s\n" "${all_serials[@]}" | LC_ALL=C sort)
+
+  local ssd_index=-1
+  local i
+  for (( i=0; i<${#sorted_serials[@]}; i++ )); do
+    if [[ "${sorted_serials[$i]}" == "$target_sn" ]]; then
+      ssd_index="$i"
+      break
+    fi
+  done
+
+  if [[ "$ssd_index" -lt 0 ]]; then
+    err "Target serial '$target_sn' not found among detected local SSDs (${sorted_serials[*]})"
+    return 1
+  fi
+
+  ID_SERIAL_SHORT="local-nvme-ssd-${ssd_index}"
+  ID_SERIAL="Google_EphemeralDisk_${ID_SERIAL_SHORT}"
+  return 0
+}
+
 function print_help_message() {
-  echo "Usage: google_nvme_id [-s] [-e] [-h] -d device_path"
+  echo "Usage: google_nvme_id [-s] [-e] [-o] [-h] -d device_path"
   echo "  -d <device_path> (Required): Specifies the path to generate a name"
   echo "        for.  This needs to be a path to an nvme device or namespace"
   echo "  -s: Create symbolic link for the disk under /dev/disk/by-id."
@@ -269,20 +390,24 @@ function print_help_message() {
   echo "        namespace numbers.  Prints nothing and exits 0 if the device"
   echo "        publishes no name, so that callers keep any name they have"
   echo "        already derived."
+  echo "  -o: Generate symlinks based on lexicographical ordering of serial"
+  echo "        number.  Only relevant for bare-metal instances."
   echo "  -h: Print this help message"
 }
 
 function main() {
   local opt_gen_symlink='false'
   local opt_vendor_ext='false'
+  local opt_order_by_serial='false'
   local device_path=''
   local OPTIND=1
 
-  while getopts :d:esh flag; do
+  while getopts :d:esoh flag; do
     case "$flag" in
       d) device_path="$OPTARG";;
       e) opt_vendor_ext='true';;
       s) opt_gen_symlink='true';;
+      o) opt_order_by_serial='true';;
       h) print_help_message
          return 0
          ;;
@@ -330,6 +455,13 @@ script as root/with sudo)."
     # prints, so the caller keeps the name it had.
     if ! identify_local_ssd_from_vendor_ext "$device_path"; then
       return 0
+    fi
+  elif [[ "$opt_order_by_serial" == 'true' ]]; then
+    # Name a bare-metal local SSD by the lexicographical position of its serial
+    # number among all NVMe drives with the same PCI vendor ID.
+    identify_local_ssd_by_serial "$controller_id" "$device_path"
+    if [[ $? -ne 0 ]]; then
+      return $?
     fi
   elif [[ "$controller_id" =~ $PD_CONTROLLER_REGEX ]] ; then
     # Fill the global variables for the id command for the given disk type
