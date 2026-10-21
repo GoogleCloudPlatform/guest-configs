@@ -23,9 +23,16 @@ SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic
 # Acquire eth0 for IDPF PF0 and keep eth* names for other IDPF PFs and VFs
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
+# systemd 249 (e.g. Ubuntu 22.04, SLES 15) does not populate ID_NET_DRIVER in
+# the net_id builtin; backfill it from the device driver when empty.
+SUBSYSTEM=="net", ACTION=="add", ENV{ID_NET_DRIVER}=="", DRIVERS=="idpf", ENV{ID_NET_DRIVER}="idpf"
+SUBSYSTEM=="net", ACTION=="add", ENV{ID_NET_DRIVER}=="", DRIVERS=="mlx5_core", ENV{ID_NET_DRIVER}="mlx5_core"
+SUBSYSTEM=="net", ACTION=="add", ENV{ID_NET_DRIVER}=="", DRIVERS=="gve", ENV{ID_NET_DRIVER}="gve"
+SUBSYSTEM=="net", ACTION=="add", ENV{ID_NET_DRIVER}=="", DRIVERS=="virtio_net", ENV{ID_NET_DRIVER}="virtio_net"
+
 # Rename unhandled network devices (e.g. onboard USB NICs) off eth0 so IDPF PF0 can acquire it.
-# gve is excluded because we don't expect platforms where gve and idpf co-exist on IDPF PFs.
-SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth0", NAME=="", ENV{ID_NET_DRIVER}!="idpf|mlx5_core|gve", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
+# gve and virtio_net are excluded because we don't expect platforms where they co-exist with IDPF PFs.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth0", NAME=="", ENV{ID_NET_DRIVER}!="idpf|mlx5_core|gve|virtio_net", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
 # Rule to rename RDMA devices
 SUBSYSTEM=="infiniband", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming"
