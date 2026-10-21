@@ -23,9 +23,10 @@ SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic
 # Acquire eth0 for IDPF PF0 and keep eth* names for other IDPF PFs and VFs
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
-# Rename unhandled network devices (e.g. onboard USB NICs) off eth0 so IDPF PF0 can acquire it.
-# gve is excluded because we don't expect platforms where gve and idpf co-exist on IDPF PFs.
-SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth0", NAME=="", ENV{ID_NET_DRIVER}!="idpf|mlx5_core|gve", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
+# Rename unhandled network devices (e.g. onboard USB NICs) off eth0 so IDPF PF0
+# can acquire it. gve is excluded because we don't expect platforms where gve
+# and idpf co-exist on IDPF PFs.
+SUBSYSTEM=="net", ACTION=="add", KERNEL=="eth0", NAME=="", DRIVERS!="idpf", DRIVERS!="mlx5_core", DRIVERS!="gve", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
 # Rule to rename RDMA devices
 SUBSYSTEM=="infiniband", ACTION=="add", DRIVERS=="idpf", PROGRAM="/usr/bin/gce-nic-naming"
