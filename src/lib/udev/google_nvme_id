@@ -28,6 +28,9 @@ readonly CONTROLLER_NUMBER_REGEX="nvme_card([[:digit:]]+)"
 readonly NAMESPACE_NUMBER_REGEX="/dev/nvme[[:digit:]]+n([[:digit:]]+).*"
 readonly PARTITION_NUMBER_REGEX="/dev/nvme[[:digit:]]+n[[:digit:]]+p([[:digit:]]+)"
 readonly PD_NVME_REGEX="sn[[:space:]]+:[[:space]]+nvme_card-pd"
+# Matches Compute Engine's AttachedDisk.deviceName schema (\w[\w.-]{0,254}):
+# https://cloud.google.com/compute/docs/reference/rest/v1/instances/attachDisk#body.request_body.FIELDS.device_name
+readonly DEVICE_NAME_REGEX="^[a-zA-Z0-9_][.a-zA-Z0-9_-]{0,254}$"
 
 # Globals used to generate the symlinks for a NVMe disk.  These are populated
 # by the identify_pd_disk function and exported for consumption by udev rules.
@@ -71,11 +74,10 @@ function get_namespace_device_name() {
   fi
 
   local device_name
-  device_name="$(echo "$nvme_json" | grep device_name | sed -e 's/.*"device_name":[  \t]*"\([.a-zA-Z0-9_-]\+\)".*/\1/')"
+  device_name="$(printf '%s\n' "$nvme_json" | LC_ALL=C sed -n 's/.*"device_name":[  \t]*"\([.a-zA-Z0-9_-]\+\)".*/\1/p')"
 
-  # Error if our device name is empty
-  if [[ -z "$device_name" ]]; then
-    err "Empty name"
+  if [[ ! "$device_name" =~ $DEVICE_NAME_REGEX ]]; then
+    err "Invalid device name"
     return 1
   fi
 
@@ -466,10 +468,7 @@ script as root/with sudo)."
   elif [[ "$controller_id" =~ $PD_CONTROLLER_REGEX ]] ; then
     # Fill the global variables for the id command for the given disk type
     # Error messages will be printed closer to error, no need to reprint here
-    identify_pd_disk "$device_path"
-    if [[ $? -ne 0 ]]; then
-      return $?
-    fi
+    identify_pd_disk "$device_path" || return $?
   elif [[ "$controller_id" =~ $SSD_CONTROLLER_REGEX ]] ; then
     identify_local_ssd_disk "$controller_id" "$device_path"
     if [[ $? -ne 0 ]]; then
