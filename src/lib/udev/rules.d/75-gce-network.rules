@@ -17,6 +17,9 @@ IMPORT{builtin}="net_id"
 # Enable max number of VFs for Intel IDPF PF (8086:1452) FIRST
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", ATTRS{vendor}=="0x8086", ATTRS{device}=="0x1452", ATTR{device/sriov_numvfs}=="0", ATTR{device/sriov_numvfs}="$attr{device/sriov_totalvfs}"
 
+# Enable max number of VFs for GVE bare-metal PF (1ae0:0043)
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="gve", ATTRS{vendor}=="0x1ae0", ATTRS{device}=="0x0043", ATTR{device/sriov_numvfs}=="0", ATTR{device/sriov_numvfs}="$attr{device/sriov_totalvfs}"
+
 # Rule to rename Mellanox devices
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
