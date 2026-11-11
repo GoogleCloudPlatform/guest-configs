@@ -68,6 +68,7 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %config /etc/rsyslog.d/*
 %config /etc/sysctl.d/*
 %config /etc/systemd/resolved.conf.d/*
+%config /etc/systemd/system/systemd-networkd.service.d/*
 
 %pre
 if [ $1 -gt 1 ] ; then

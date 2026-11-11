@@ -58,6 +58,7 @@ declare -a ethernet_devices
 declare -a irdma_devices
 declare -a gpu_nic_devices
 declare -a accelerator_devices
+declare -a pci_device_paths
 
 # Ratio of Processor to Ethernet devices
 declare -i ethernet_to_accelerator_ratio=1
@@ -165,6 +166,11 @@ function list_devices() {
   local -n irdma_map="$2"
   local -n gpu_nic_map="$3"
   local -n accelerator_map="$4"
+  local -i record_paths=0
+  if [[ "$1" == "ethernet_devices" ]]; then
+    record_paths=1
+    pci_device_paths=()
+  fi
   shift
   shift
   shift
@@ -188,10 +194,13 @@ function list_devices() {
     vendor="${vendor#0x}"
     device="${device#0x}"
     device_id="${vendor}:${device}"
+    local -i matched=0
     if [[ " ${IRDMA_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]] && [[ -d "${pci_device}/${rdma_folder}" ]]; then
       irdma_map[${int_id}]=${device_id}
+      matched=1
     elif [[ " ${ETHERNET_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
       ethernet_map[${int_id}]=${device_id}
+      matched=1
     fi
     if [[ " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
       local physfn_path="${pci_device}/physfn"
@@ -203,9 +212,18 @@ function list_devices() {
       fi
 
       gpu_nic_map[${int_id}]=${device_id}
+      matched=1
     fi
     if [[ " ${GPU_DEVICES_VENDORS[*]} " =~ [[:space:]]${device_id}[[:space:]] ]]; then
       accelerator_map[${int_id}]=${device_id}
+      matched=1
+    fi
+    if [[ ${record_paths} -eq 1 && ${matched} -eq 1 ]]; then
+      local resolved_path="${pci_device}"
+      if [[ -L "${pci_device}" ]]; then
+        resolved_path="$(readlink -f "${pci_device}")"
+      fi
+      pci_device_paths[${int_id}]="/devices/${resolved_path#*/devices/}"
     fi
   done
   debug $(printf "Generated ethernet_devices_map: %s %s" "${!ethernet_map[*]}" \
@@ -248,24 +266,32 @@ function gather_lowest_denominator_devices() {
     error_and_exit "Empty path"
   fi
 
-  # Search for all vendor files at an equivalent depth to the device then remove
-  #/vendor from the found paths
-  # Find is not order guaranteed so sort the output
-  local output=$(find ${path} -name "vendor" | sort | sed 's;/vendor;;g')
-
-  if [[ $? -ne 0 ]]; then
-    error_and_exit "Find failed: ${path}"
+  local rel_path=""
+  if [[ "${path}" == */devices/* ]]; then
+    rel_path="/devices/${path#*/devices/}"
+  elif [[ "${path}" == */devices ]]; then
+    rel_path="/devices"
   fi
 
-  local -i line_count=0
-  if [[ ${output} != "" ]]; then
-    line_count=$(wc -l <<< "${output}")
-  fi
-
-  if [[ ${line_count} -gt 1 ]]; then
-    # build array
-    # NOTE: Calling in a $() will not modify the array in this instance
-    list_devices bus_specific_ethernet_device_map bus_specific_irdma_device_map bus_specific_gpu_nic_device_map bus_specific_accelerator_device_map "${output}"
+  if [[ -n "${rel_path}" ]]; then
+    local -i int_id
+    for int_id in "${!pci_device_paths[@]}"; do
+      local dev_path="${pci_device_paths[${int_id}]}"
+      if [[ "${dev_path}" == "${rel_path}" || "${dev_path}" == "${rel_path}/"* ]]; then
+        if [[ -n "${ethernet_devices[${int_id}]}" ]]; then
+          bus_specific_ethernet_device_map[${int_id}]="${ethernet_devices[${int_id}]}"
+        fi
+        if [[ -n "${irdma_devices[${int_id}]}" ]]; then
+          bus_specific_irdma_device_map[${int_id}]="${irdma_devices[${int_id}]}"
+        fi
+        if [[ -n "${gpu_nic_devices[${int_id}]}" ]]; then
+          bus_specific_gpu_nic_device_map[${int_id}]="${gpu_nic_devices[${int_id}]}"
+        fi
+        if [[ -n "${accelerator_devices[${int_id}]}" ]]; then
+          bus_specific_accelerator_device_map[${int_id}]="${accelerator_devices[${int_id}]}"
+        fi
+      fi
+    done
 
     if [[ ${#bus_specific_gpu_nic_device_map[@]} -ne 0 ]] && [[ ${#bus_specific_accelerator_device_map[@]} -ne 0 ]]; then
 

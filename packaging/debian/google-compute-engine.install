@@ -5,6 +5,7 @@ etc/sysctl.d/*
 etc/NetworkManager/dispatcher.d/*
 usr/lib/networkd-dispatcher/*
 etc/systemd/resolved.conf.d/*
+etc/systemd/system/systemd-networkd.service.d/*
 lib/udev/rules.d/*
 lib/udev/*
 usr/bin/*
