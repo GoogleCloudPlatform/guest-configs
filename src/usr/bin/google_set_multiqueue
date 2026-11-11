@@ -350,11 +350,31 @@ function set_xps_affinity() {
   local numa="$1"
   local cpus=("${@:2}")
 
-  if [[ "$machine_type" == *"a4x-maxgpu-"* || "$machine_type" == *"a5x-"* ]]; then
-    # We find that setting XPS on these platforms degrades performance.
-    echo "skipping set_xps_affinity"
-    return
-  fi
+  local machine_name="${machine_type##*/}"
+  case "${machine_name}" in
+    a4x-maxgpu-*)
+      # Special case, as for a4x-high (etc) we use the special
+      # A4X_ALL_CPUS_MASK below.
+      echo "skipping set_xps_affinity"
+      return
+      ;;
+    a3-*gpu-8g* | a3-ultragpu-* | \
+    a4-highgpu-* | a4-*-8g* | \
+    a4x-* | \
+    c4n-* | c4x-* | \
+    ct6e-* | \
+    g4-* | \
+    m4n-*-224* | \
+    tpu7-* | tpu7x-* | tpu8i-* | tpu8t-* | \
+    u3-* | u4c-* | u4p-* | \
+    z4d-*-384* | z4m-*-192*)
+      # Fall through to configure XPS.
+      ;;
+    *)
+      echo "skipping set_xps_affinity"
+      return
+      ;;
+  esac
 
   total_vcpus=${#cpus[@]}
   nics_string=$(get_network_interfaces)
@@ -364,7 +384,6 @@ function set_xps_affinity() {
     tx_queue_count=$(ls -1 ${ROOT_DIR}sys/class/net/"$nic"/queues/ | grep tx | wc -l)
 
     if [[ "$machine_type" == *"a4x-"* ]]; then
-      # Implicitly excluding a4x-maxgpu- due to earlier check.
       # All queues on a4x get the full mask.
       for (( queue=0; queue<tx_queue_count; queue++ )); do
         echo "${A4X_ALL_CPUS_MASK}" > "${ROOT_DIR}sys/class/net/$nic/queues/tx-$queue/xps_cpus"
