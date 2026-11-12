@@ -366,8 +366,7 @@ function set_xps_affinity() {
     g4-* | \
     m4n-*-224* | \
     tpu7-* | tpu7x-* | tpu8i-* | tpu8t-* | \
-    u3-* | u4c-* | u4p-* | \
-    z4d-*-384* | z4m-*-192*)
+    u3-* | u4c-* | u4p-* )
       # Fall through to configure XPS.
       ;;
     *)
