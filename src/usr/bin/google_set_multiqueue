@@ -351,6 +351,7 @@ function set_xps_affinity() {
   local cpus=("${@:2}")
 
   local machine_name="${machine_type##*/}"
+  # LINT.IfChange
   case "${machine_name}" in
     a4x-maxgpu-*)
       # Special case, as for a4x-high (etc) we use the special
@@ -374,6 +375,7 @@ function set_xps_affinity() {
       return
       ;;
   esac
+  # LINT.ThenChange(//depot/google3/third_party/golang/github_com/GoogleCloudPlatform/cloud_image_tests/test_suites/networkconfig/config_expectations/config_expectations.textproto)
 
   total_vcpus=${#cpus[@]}
   nics_string=$(get_network_interfaces)
