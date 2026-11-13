@@ -4,7 +4,7 @@
 
 # called by dracut
 install() {
-  inst_multiple nvme grep sed
+  inst_multiple nvme dd ln grep sed
   inst_simple /usr/lib/udev/google_nvme_id
   inst_simple /usr/lib/udev/rules.d/65-gce-disk-naming.rules
 }
