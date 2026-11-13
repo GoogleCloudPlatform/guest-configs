@@ -595,19 +595,34 @@ function generate_ethernet_name() {
 
 #################################
 # Rename the irdma device to the next available rdma* name and return the new
-# name.
+# name. On A5X, preserve the predictable PCI-path name (ID_NET_NAME_PATH) on
+# net events and skip renaming on infiniband events.
 #
 # Arguments:
 #   $1: Vendor of the irdma device
 #   $2: Index of the irdma device in irdma_devices array
 #   $3: Device path of the irdma device
 # Outputs:
-#   New name of the device (rdma0, rdma1, etc.)
+#   New name of the device (rdma0, rdma1, ID_NET_NAME_PATH, etc.)
 #################################
 function generate_irdma_name() {
   local int_id=$1
   local irdma_index=$2
   local device_path=$3
+
+  if is_a5x; then
+    if [[ "${device_path}" == *"/infiniband/"* ]]; then
+      error_and_exit "Skipping irdma rename on A5X infiniband event for device_path: ${device_path}"
+    fi
+    # ID_NET_NAME_PATH is empty if the netdev was already renamed or net_id
+    # did not set a path name; exit so udev skips NAME="%c".
+    if [[ -z "${ID_NET_NAME_PATH}" ]]; then
+      error_and_exit "Missing ID_NET_NAME_PATH on A5X irdma net device: ${device_path}"
+    fi
+    notice "irdma nic name: ${ID_NET_NAME_PATH} for device_path: ${device_path}"
+    echo ${ID_NET_NAME_PATH}
+    return
+  fi
 
   local net_dir="${device_path%/*}"
   if [[ "${device_path}" == *"/infiniband/"* ]]; then
