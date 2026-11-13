@@ -675,13 +675,37 @@ function generate_gpu_nic_name() {
     error_and_exit "No index ratios found"
   fi
 
-  # Handle CX VF representation
+  # phys_port_name formats across mlx5 interfaces:
+  #   - PF: "p<N>" (e.g., "p0".."p3", or empty in legacy non-switchdev mode)
+  #   - VF: empty (unreadable / EOPNOTSUPP; handled via physfn)
+  #   - VF representor: "pf<M>vf<N>" (e.g., "pf0vf0".."pf0vf4")
   local phys_port_name=$(cat "${device_path}/phys_port_name" 2>/dev/null)
-  if [[ "${phys_port_name}" == *"vf"* ]]; then
-    local -i vf_index=${phys_port_name##*vf}
-    local -i eth_index=$(( vf_index + 2 )) # slot 0&1 are PF, VF starts at 2
-    name_builder="gpu${gpu_index}rdma${eth_index}_rep"
+  if [[ "${phys_port_name}" != *"vf"* ]]; then
+    if ! is_a5x; then
+      notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
+      echo ${name_builder}
+      return
+    fi
+
+    # Skip adding altname if a prior uevent already renamed this netdev.
+    if [[ -d "${device_path}" ]]; then
+      local old_name=$(basename "${device_path}")
+      run_ip_cmd link property add dev "${old_name}" altname "${name_builder}"
+    fi
+    # ID_NET_NAME_PATH is empty if the netdev was already renamed or net_id
+    # did not set a path name; exit so udev skips NAME="%c".
+    if [[ -z "${ID_NET_NAME_PATH}" ]]; then
+      error_and_exit "Missing ID_NET_NAME_PATH on A5X GPU NIC PF: ${device_path}"
+    fi
+    notice "gpu nic name: ${ID_NET_NAME_PATH} (altname: ${name_builder}) for device_path: ${device_path}"
+    echo ${ID_NET_NAME_PATH}
+    return
   fi
+
+  # Handle CX VF representation
+  local -i vf_index=${phys_port_name##*vf}
+  local -i eth_index=$(( vf_index + 2 )) # slot 0&1 are PF, VF starts at 2
+  name_builder="gpu${gpu_index}rdma${eth_index}_rep"
 
   notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
   echo ${name_builder}
