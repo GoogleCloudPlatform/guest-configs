@@ -523,6 +523,24 @@ function should_name_ethernet_devices() {
 }
 
 #################################
+# Check whether the host is an A5X platform (both VR200 GPU and ConnectX-9 NIC
+# present on the PCI bus).
+#
+# Globals:
+#   accelerator_devices: Array of accelerator devices
+#   gpu_nic_devices: Array of gpu nic devices
+# Returns:
+#   0 if both 10de:3041 and 15b3:1025 are present, 1 otherwise
+#################################
+function is_a5x() {
+  if [[ " ${accelerator_devices[*]} " =~ [[:space:]]10de:3041[[:space:]] ]] && \
+     [[ " ${gpu_nic_devices[*]} " =~ [[:space:]]15b3:1025[[:space:]] ]]; then
+    return 0
+  fi
+  return 1
+}
+
+#################################
 # Generate the ethernet name of the device based on the vendor
 #
 # Arguments:
@@ -530,7 +548,7 @@ function should_name_ethernet_devices() {
 #   $2: Index of the ethernet device in ethernet_devices array
 #   $3: Device path of the ethernet device
 # Outputs:
-#   Name of the device (eth0, eth1, etc.)
+#   Name of the device (eth0, eth1, ID_NET_NAME_PATH, etc.)
 #################################
 function generate_ethernet_name() {
   local int_id=$1
@@ -555,6 +573,12 @@ function generate_ethernet_name() {
     fi
     notice "ethernet nic name: ${new_name} for device_path: ${device_path}"
     echo ${new_name}
+    return
+  fi
+
+  if is_a5x && [[ -n "${ID_NET_NAME_PATH}" ]]; then
+    notice "ethernet nic name: ${ID_NET_NAME_PATH} for device_path: ${device_path}"
+    echo ${ID_NET_NAME_PATH}
     return
   fi
 
