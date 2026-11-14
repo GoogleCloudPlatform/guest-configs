@@ -651,8 +651,11 @@ function generate_irdma_name() {
 #   $2: Index of the gpu nic device in gpu_nic_devices array
 #   $3: Device path of the gpu nic device
 # Outputs:
-#   Name of the device (gpu0rdma1, gpu1rdma0, etc.)
-#   In case of CX VF representation it will return (gpu0rdma2_rep, etc.)
+#   Name of the device:
+#   - PF: gpu0rdma0, gpu0rdma1, etc. (or ID_NET_NAME_PATH with gpuXrdmaY
+#     altname on A5X)
+#   - CX VF representor: gpu0rdma0v0rep, etc. (or enP*r<N> with
+#     gpuXrdmaYv<N>rep altname on A5X)
 #################################
 function generate_gpu_nic_name() {
   local int_id=$1
@@ -692,11 +695,13 @@ function generate_gpu_nic_name() {
       local old_name=$(basename "${device_path}")
       run_ip_cmd link property add dev "${old_name}" altname "${name_builder}"
     fi
+
     # ID_NET_NAME_PATH is empty if the netdev was already renamed or net_id
     # did not set a path name; exit so udev skips NAME="%c".
     if [[ -z "${ID_NET_NAME_PATH}" ]]; then
       error_and_exit "Missing ID_NET_NAME_PATH on A5X GPU NIC PF: ${device_path}"
     fi
+
     notice "gpu nic name: ${ID_NET_NAME_PATH} (altname: ${name_builder}) for device_path: ${device_path}"
     echo ${ID_NET_NAME_PATH}
     return
@@ -704,11 +709,39 @@ function generate_gpu_nic_name() {
 
   # Handle CX VF representation
   local -i vf_index=${phys_port_name##*vf}
-  local -i eth_index=$(( vf_index + 2 )) # slot 0&1 are PF, VF starts at 2
-  name_builder="gpu${gpu_index}rdma${eth_index}_rep"
+  name_builder="${name_builder}v${vf_index}rep"
+  if ! is_a5x; then
+    notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
+    echo ${name_builder}
+    return
+  fi
 
-  notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
-  echo ${name_builder}
+  # Attach gpuXrdmaYv0rep..gpuXrdmaYv4rep altname to VF representors 0..4.
+  if [[ ${vf_index} -gt 4 ]]; then
+    error_and_exit "Unsupported VF index ${vf_index} on A5X GPU NIC representor: ${device_path}"
+  fi
+
+  # Skip adding altname if a prior uevent already renamed this netdev.
+  if [[ -d "${device_path}" ]]; then
+    local old_name=$(basename "${device_path}")
+    run_ip_cmd link property add dev "${old_name}" altname "${name_builder}"
+  fi
+
+  # ID_NET_NAME_PATH is empty if the netdev was already renamed or net_id
+  # did not set a path name; exit so udev skips NAME="%c".
+  if [[ -z "${ID_NET_NAME_PATH}" ]]; then
+    error_and_exit "Missing ID_NET_NAME_PATH on A5X GPU NIC representor: ${device_path}"
+  fi
+
+  # Normalize pre-v257 systemd net_id suffix (e.g. enP14p1s0f0npf0vf0 ->
+  # enP14p1s0f0r0) so the primary name fits within IFNAMSIZ (15).
+  local new_name="${ID_NET_NAME_PATH}"
+  if [[ "${new_name}" == *"n${phys_port_name}" ]]; then
+    new_name="${new_name%n${phys_port_name}}r${vf_index}"
+  fi
+
+  notice "gpu nic representor name: ${new_name} (altname: ${name_builder}) for device_path: ${device_path}"
+  echo ${new_name}
 }
 
 #################################
