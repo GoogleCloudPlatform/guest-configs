@@ -745,16 +745,18 @@ function generate_gpu_nic_name() {
 }
 
 #################################
-# Generate the gpu nic name for the VF device based on the vendor
+# Generate the gpu nic name for a bare-metal SR-IOV VF device (with physfn)
 #
 # Arguments:
 #   $1: Vendor of the gpu nic device
 #   $2: Device path of the gpu nic VF device
 #   $3: Device path of the gpu nic PF device
 # Outputs:
-#   Name of the device (gpu0rdma2, gpu1rdma3, etc.)
+#   Name of the device:
+#   - Non-A5X: gpu0rdma0v0, gpu1rdma0v0, etc.
+#   - A5X: ID_NET_NAME_PATH (enP*v<N>) with gpuXrdmaYv<N> altname
 #################################
-function generate_gpu_nic_name_has_physfn() {
+function generate_gpu_nic_sriov_vf_name() {
   local -i int_id=$1
   local vf_path=$2
   local physfn_path=$3
@@ -765,27 +767,71 @@ function generate_gpu_nic_name_has_physfn() {
   local vf_device=$(cat "${vf_path}/device/device")
   local vf_device_id="${vf_vendor#0x}:${vf_device#0x}"
   if [[ ! " ${GPU_NIC_DEVICES_VENDORS[*]} " =~ [[:space:]]${vf_device_id}[[:space:]] ]]; then
-    error_and_exit "VF device is not for intent based name: ${path}"
+    error_and_exit "VF device is not for intent based name: ${vf_path}"
   fi
 
-  # Get the index of the accelerator device based on the NIC pf device index
+  local -i physfn_gpu_nic_index=$(get_index ${physfn_int_id} "${!gpu_nic_devices[@]}")
+  local physfn_vendor="${gpu_nic_devices[${physfn_int_id}]}"
+  local name_builder=""
+
+  # Derive the parent PF's GPU index and base intent-based name (e.g.
+  # gpu0rdma0 or gpu0rdma4) so VF names stay correlated with their parent PF.
   local -i gpu_index=-1
   if [[ ${ethernet_to_accelerator_ratio} != 0 ]]; then
     gather_lowest_denominator_devices "${physfn_path}"
     gpu_index=$(get_accelerator_index ${physfn_int_id})
+    name_builder=$(name_ethernet_greater_equal_gpu "${physfn_vendor}" ${physfn_gpu_nic_index} ${gpu_index})
   elif [[ ${accelerator_to_ethernet_ratio} != 0 ]]; then
     gather_lowest_denominator_devices "${physfn_path}"
     gpu_index=$(get_accelerator_index ${physfn_int_id})
+    name_builder=$(name_gpu_greater_ethernet "${physfn_vendor}" ${physfn_gpu_nic_index} ${gpu_index})
   else
     error_and_exit "No index ratios found"
   fi
 
-  # using the slot number of the VF as the rdma index
-  local -i rdma_index=$(( int_id % 16 ))
-  name_builder="gpu${gpu_index}rdma${rdma_index}"
+  # Resolve vf_index via physfn/virtfn<N>. In Linux pci_iov_add_virtfn(),
+  # physfn/virtfn<N> is created before the VF driver binds and registers the
+  # netdev, so it is always present on SUBSYSTEM=="net" add events.
+  local vf_pci_path=$(readlink -f "${vf_path}/device")
+  local -i vf_index=-1
+  local virtfn
+  for virtfn in "${physfn_path}"/virtfn*; do
+    [[ -L "${virtfn}" ]] || continue
+    if [[ "$(readlink -f "${virtfn}")" == "${vf_pci_path}" ]]; then
+      vf_index=${virtfn##*virtfn}
+      break
+    fi
+  done
+  if [[ ${vf_index} -eq -1 ]]; then
+    error_and_exit "Failed to find virtfn symlink for VF: ${vf_path}"
+  fi
 
-  notice "gpu nic name: ${name_builder} for device_path: ${device_path}"
-  echo ${name_builder}
+  name_builder="${name_builder}v${vf_index}"
+  if ! is_a5x; then
+    notice "gpu nic name: ${name_builder} for device_path: ${vf_path}"
+    echo ${name_builder}
+    return
+  fi
+
+  # Attach gpuXrdmaYv0..gpuXrdmaYv4 altname to VFs 0..4.
+  if [[ ${vf_index} -gt 4 ]]; then
+    error_and_exit "Unsupported VF index ${vf_index} on A5X GPU NIC VF: ${vf_path}"
+  fi
+
+  # Skip adding altname if a prior uevent already renamed this netdev.
+  if [[ -d "${vf_path}" ]]; then
+    local old_name=$(basename "${vf_path}")
+    run_ip_cmd link property add dev "${old_name}" altname "${name_builder}"
+  fi
+
+  # ID_NET_NAME_PATH is empty if the netdev was already renamed or net_id
+  # did not set a path name; exit so udev skips NAME="%c".
+  if [[ -z "${ID_NET_NAME_PATH}" ]]; then
+    error_and_exit "Missing ID_NET_NAME_PATH on A5X GPU NIC VF: ${vf_path}"
+  fi
+
+  notice "gpu vf nic name: ${ID_NET_NAME_PATH} (altname: ${name_builder}) for device_path: ${vf_path}"
+  echo ${ID_NET_NAME_PATH}
 }
 
 ###############################
@@ -832,7 +878,7 @@ function generate_name() {
     local -i physfn_int_id
     get_id_from_path "${physfn_path}" physfn_int_id
     if [[ $(get_index ${physfn_int_id} "${!gpu_nic_devices[@]}") -ne -1 ]]; then
-      echo $(generate_gpu_nic_name_has_physfn ${int_id} ${device_path} ${physfn_path})
+      echo $(generate_gpu_nic_sriov_vf_name ${int_id} ${device_path} ${physfn_path})
       return
     fi
   fi
