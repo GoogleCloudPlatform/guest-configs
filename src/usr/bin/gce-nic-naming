@@ -541,6 +541,75 @@ function is_a5x() {
 }
 
 #################################
+# Check whether the host is compute node 0 of a dual-node Bondibeach
+# bare metal system.
+#
+# On dual-node Bondibeach bare metal systems with two IDPF PFs per compute
+# node, the two compute nodes order their IDPF PFs differently in the PCIe
+# topology. Compute node 1 matches other systems by placing the primary IDPF
+# PF at the lower PCI BDF (index 0), whereas compute node 0 places the
+# primary IDPF PF at the higher PCI BDF (index 1).
+#
+# Detection criteria:
+#   1. Exactly 2 IDPF PFs on the PCI bus (excludes single-PF Bondibeach
+#      configurations such as C4A Metal).
+#   2. /sys/class/dmi/id/board_name is "bondibeach" or "agorav3ad" (whereas
+#      standard GCE VMs report "Google Compute Engine").
+#   3. /sys/firmware/dmi/tables/DMI contains the SMBIOS port connector string
+#      "CPU0_UART_CPSS1", which is populated only on compute node 0 (compute
+#      node 1 populates "CPU1_UART_CPSS1").
+#
+# Globals:
+#   SYS_PREPEND_PATH: Path to /sys
+#   ethernet_devices: Array of discovered IDPF PFs sorted by PCI BDF
+# Returns:
+#   0 if running on compute node 0 of a dual-node Bondibeach system, 1 otherwise
+#################################
+function is_dual_node_bondibeach_compute_node0() {
+  if [[ ${#ethernet_devices[@]} -ne 2 ]]; then
+    return 1
+  fi
+
+  local -r board_name_path="${SYS_PREPEND_PATH}/class/dmi/id/board_name"
+  if [[ ! -f "${board_name_path}" ]]; then
+    return 1
+  fi
+  local -r board_name="$(cat "${board_name_path}")"
+  if [[ "${board_name}" != "bondibeach" && "${board_name}" != "agorav3ad" ]]; then
+    return 1
+  fi
+
+  local -r dmi_table_path="${SYS_PREPEND_PATH}/firmware/dmi/tables/DMI"
+  if [[ -f "${dmi_table_path}" ]] && grep -qa "CPU0_UART_CPSS1" "${dmi_table_path}"; then
+    return 0
+  fi
+
+  return 1
+}
+
+#################################
+# Return the index in ethernet_devices of the primary IDPF PF that should be
+# named eth0.
+#
+# On all standard GCE platforms, the primary IDPF PF is the first PF in PCI BDF
+# order (index 0). Platform-specific hardware edge cases where a different IDPF
+# PF is primary are checked explicitly before falling back to 0.
+#
+# Globals:
+#   ethernet_devices: Array of discovered IDPF PFs sorted by PCI BDF
+# Outputs:
+#   0-based index into ethernet_devices for the primary IDPF PF
+#################################
+function get_ethernet_index_for_primary_idpf_pf() {
+  if is_dual_node_bondibeach_compute_node0; then
+    echo 1
+    return
+  fi
+
+  echo 0
+}
+
+#################################
 # Generate the ethernet name of the device based on the vendor
 #
 # Arguments:
@@ -557,7 +626,8 @@ function generate_ethernet_name() {
 
   # Diorite NIC
   local old_name=$(basename ${device_path})
-  if [[ ${eth_index} -eq 0 ]]; then
+  local -r primary_eth_index=$(get_ethernet_index_for_primary_idpf_pf)
+  if [[ ${eth_index} -eq ${primary_eth_index} ]]; then
     local new_name="eth0"
     if [[ "${old_name}" != "eth0" ]]; then
       notice "Acquiring ${new_name} for ${old_name}"
