@@ -32,6 +32,10 @@ readonly PD_NVME_REGEX="sn[[:space:]]+:[[:space]]+nvme_card-pd"
 # https://cloud.google.com/compute/docs/reference/rest/v1/instances/attachDisk#body.request_body.FIELDS.device_name
 readonly DEVICE_NAME_REGEX='^[a-zA-Z0-9_][.a-zA-Z0-9_-]{0,254}$'
 
+# Baremetal identifiers (Knuckle firmware)
+readonly BM_FW_REGEX="fr[[:space:]]+:[[:space:]]+AKPEDZ01"
+readonly BM_SN_REGEX="sn[[:space:]]+:[[:space:]]+[[:xdigit:]]{16,}\.[[:xdigit:]]+"
+
 # Globals used to generate the symlinks for a NVMe disk.  These are populated
 # by the identify_pd_disk function and exported for consumption by udev rules.
 ID_SERIAL=''
@@ -63,7 +67,7 @@ function err() {
 #######################################
 function get_namespace_device_name() {
   local nvme_json
-  nvme_json="$("$nvme_cli_bin" id-ns -b "$1" | dd bs=1 skip=384 2>/dev/null)"
+  nvme_json="$("$nvme_cli_bin" id-ns -b "$1" | dd bs=1 skip=384 2>/dev/null | tr -d '\0')"
   if [[ $? -ne 0 ]]; then
     return 1
   fi
@@ -212,6 +216,21 @@ function identify_pd_disk() {
 function identify_local_ssd_disk() {
   local dev_model="$1"
   local dev_path="$2"
+
+  # POSITIVE BAREMETAL IDENTIFICATION
+  # If we detect baremetal hardware, read the "Truth" from the JSON metadata.
+  if [[ "$dev_model" =~ $BM_FW_REGEX || "$dev_model" =~ $BM_SN_REGEX ]]; then
+    local dev_name
+    dev_name="$(get_namespace_device_name "$dev_path")"
+    if [[ $? -eq 0 ]]; then
+      ID_SERIAL_SHORT="$dev_name" # Use "local-nvme-ssd-N" from JSON
+      ID_SERIAL="Google_EphemeralDisk_${ID_SERIAL_SHORT}"
+      return 0
+    fi
+    err "Baremetal detected but JSON metadata lookup failed for $dev_path"
+  fi
+
+  # Fallback to legacy index-based calculation for NON-BAREMETAL systems.
   local controller_number
   controller_number="$(get_controller_number "$dev_model")"
   if [[ $? -ne 0 ]]; then
