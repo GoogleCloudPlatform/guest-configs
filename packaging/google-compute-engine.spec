@@ -19,6 +19,15 @@
   %define dist .el7
 %endif
 
+# [Match] Property= in 05-gce-mlx5-unmanaged.network requires systemd >= 243.
+# Skip installing systemd-networkd drop-ins on EL7/EL8 (systemd 219/239) for
+# both native rpmbuild (rhel) and cross-distro builds (dist).
+%if 0%{?rhel} == 7 || 0%{?rhel} == 8 || "%{?dist}" == ".el7" || "%{?dist}" == ".el8"
+%global include_systemd_network 0
+%else
+%global include_systemd_network 1
+%endif
+
 Name: google-compute-engine
 Epoch: 1
 Version: %{_version}
@@ -51,7 +60,12 @@ specific to the Google Compute Engine cloud environment.
 cp -a src/{etc,usr} %{buildroot}
 install -d %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/rules.d/* %{buildroot}/%{_udevrulesdir}
+cp -a src/lib/udev/google_mlx5_is_unmanaged %{buildroot}/%{_udevrulesdir}/../
 cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
+%if %{include_systemd_network}
+install -d %{buildroot}/usr/lib/systemd/network
+cp -a src/lib/systemd/network/* %{buildroot}/usr/lib/systemd/network/
+%endif
 install -d  %{buildroot}/%{dracutdir}
 cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 
@@ -62,7 +76,11 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %attr(0755,-,-) /etc/dhcp/dhclient.d/google_hostname.sh
 %attr(0755,-,-) /etc/NetworkManager/dispatcher.d/google_hostname.sh
 %{_udevrulesdir}/*
+%attr(0755,-,-) %{_udevrulesdir}/../google_mlx5_is_unmanaged
 %attr(0755,-,-) %{_udevrulesdir}/../google_nvme_id
+%if %{include_systemd_network}
+/usr/lib/systemd/network/*
+%endif
 %config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*
