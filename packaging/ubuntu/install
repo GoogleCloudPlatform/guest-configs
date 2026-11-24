@@ -3,6 +3,7 @@ src/etc/apt/apt.conf.d/* etc/apt/apt.conf.d
 src/etc/modprobe.d/* etc/modprobe.d
 src/etc/rsyslog.d/* etc/rsyslog.d
 src/etc/sysctl.d/* etc/sysctl.d
+src/lib/systemd/network/* lib/systemd/network
 src/lib/udev/* lib/udev
 src/usr/bin/* usr/bin
 src/etc/systemd/resolved.conf.d/* etc/systemd/resolved.conf.d

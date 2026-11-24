@@ -52,6 +52,8 @@ cp -a src/{etc,usr} %{buildroot}
 install -d %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/rules.d/* %{buildroot}/%{_udevrulesdir}
 cp -a src/lib/udev/google_nvme_id %{buildroot}/%{_udevrulesdir}/../
+install -d %{buildroot}/usr/lib/systemd/network
+cp -a src/lib/systemd/network/* %{buildroot}/usr/lib/systemd/network/
 install -d  %{buildroot}/%{dracutdir}
 cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 
@@ -63,6 +65,7 @@ cp -a src/lib/dracut/* %{buildroot}/%{dracutdir}/
 %attr(0755,-,-) /etc/NetworkManager/dispatcher.d/google_hostname.sh
 %{_udevrulesdir}/*
 %attr(0755,-,-) %{_udevrulesdir}/../google_nvme_id
+/usr/lib/systemd/network/*
 %config /etc/dracut.conf.d/*
 %config /etc/modprobe.d/*
 %config /etc/rsyslog.d/*

@@ -20,6 +20,19 @@ SUBSYSTEM=="net", ACTION=="add", DRIVERS=="idpf", ATTRS{vendor}=="0x8086", ATTRS
 # Enable max number of VFs for GVE bare-metal PF (1ae0:0043)
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="gve", ATTRS{vendor}=="0x1ae0", ATTRS{device}=="0x0043", ATTR{device/sriov_numvfs}=="0", ATTR{device/sriov_numvfs}="$attr{device/sriov_totalvfs}"
 
+# Mark multi-PF bare-metal mlx5_core ConnectX-9 RoCE PFs (0x1025 with a sibling
+# 0x1025 PF 00.1) and their SR-IOV VFs unmanaged by NetworkManager and
+# systemd-networkd (natively on systemd >= 255 and via
+# 05-gce-mlx5-unmanaged.network on systemd < 255), while leaving single-PF modes
+# (where sibling PF 00.1 with 0x1025 is absent) and VM pass-through VFs (0x101e)
+# managed. Placed before gce-nic-naming, matched with ACTION!="remove", and
+# keyed on the parent PCI device (ATTRS/%b rather than /sys%p/device) so
+# properties are set on add, survive stale pre-rename add uevents queued by
+# early-boot udev triggers (e.g. netplan-configure.service), and persist across
+# interface rename (move) uevents.
+SUBSYSTEM=="net", ACTION!="remove", DRIVERS=="mlx5_core", ATTRS{device}=="0x1025", PROGRAM=="/bin/sh -c 'grep -qx 0x1025 /sys/bus/pci/devices/%b/../*:??:00.1/device 2>/dev/null'", ENV{NM_UNMANAGED}="1", ENV{ID_NET_MANAGED_BY}="unmanaged"
+SUBSYSTEM=="net", ACTION!="remove", DRIVERS=="mlx5_core", ATTRS{physfn/device}=="0x1025", ENV{NM_UNMANAGED}="1", ENV{ID_NET_MANAGED_BY}="unmanaged"
+
 # Rule to rename Mellanox devices
 SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mlx5_core", PROGRAM="/usr/bin/gce-nic-naming", NAME="%c"
 
