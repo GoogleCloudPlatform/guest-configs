@@ -1,0 +1,98 @@
+#!/bin/bash
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Exits 0 if the given mlx5_core PCI device (BDF, e.g. 0001:03:00.0) belongs to
+# a multi-PF bare-metal ConnectX-9 RoCE NIC that should be left unmanaged by
+# NetworkManager and systemd-networkd, and 1 otherwise.
+#
+# Single-PF ConnectX-9 modes (without a sibling 0x15b3:0x1025 function .0/.1 on
+# the same PCI slot) and VM pass-through VFs (0x101e without a physfn symlink)
+# exit 1 so they remain managed for DHCP.
+
+readonly MELLANOX_VENDOR_ID='0x15b3'
+readonly CX9_DEVICE_ID='0x1025'
+readonly PCI_BDF_REGEX='^[0-9a-fA-F]+:[0-9a-fA-F]+:[0-9a-fA-F]+\.[0-9a-fA-F]+$'
+
+# Overridable sysfs root for unit tests.
+sysfs_pci_devices_dir='/sys/bus/pci/devices'
+
+read_sysfs_hex() {
+  local path="$1"
+  local value
+  if [[ ! -r "${path}" ]]; then
+    return 1
+  fi
+  IFS= read -r value < "${path}" || return 1
+  value="${value//[[:space:]]/}"
+  printf '%s\n' "${value,,}"
+}
+
+is_cx9_pf() {
+  local pci_dir="$1"
+  local vendor
+  local device
+  vendor="$(read_sysfs_hex "${pci_dir}/vendor")" || return 1
+  device="$(read_sysfs_hex "${pci_dir}/device")" || return 1
+  [[ "${vendor}" == "${MELLANOX_VENDOR_ID}" && "${device}" == "${CX9_DEVICE_ID}" ]]
+}
+
+is_unmanaged_mlx5_bdf() {
+  local bdf="$1"
+  if [[ ! "${bdf}" =~ ${PCI_BDF_REGEX} ]]; then
+    return 1
+  fi
+
+  local dev_dir="${sysfs_pci_devices_dir}/${bdf}"
+  if [[ ! -d "${dev_dir}" ]]; then
+    return 1
+  fi
+
+  local pf_bdf="${bdf}"
+  local pf_dir="${dev_dir}"
+  if [[ -L "${dev_dir}/physfn" || -d "${dev_dir}/physfn" ]]; then
+    local resolved_pf
+    resolved_pf="$(readlink -f -- "${dev_dir}/physfn" 2>/dev/null)" || return 1
+    if [[ ! -d "${resolved_pf}" ]]; then
+      return 1
+    fi
+    pf_dir="${resolved_pf}"
+    pf_bdf="$(basename -- "${resolved_pf}")"
+    if [[ ! "${pf_bdf}" =~ ${PCI_BDF_REGEX} ]]; then
+      return 1
+    fi
+  fi
+
+  # Verify the target device (or a VF's parent PF) is a ConnectX-9 PF.
+  is_cx9_pf "${pf_dir}" || return 1
+
+  # Multi-PF cards expose at least functions .0 and .1 on the same PCI slot.
+  # Check via sysfs_pci_devices_dir directly so sibling lookup works identically
+  # for both PFs and SR-IOV VFs without wildcard globbing across other buses.
+  local slot="${pf_bdf%.*}"
+  is_cx9_pf "${sysfs_pci_devices_dir}/${slot}.0" || return 1
+  is_cx9_pf "${sysfs_pci_devices_dir}/${slot}.1" || return 1
+  return 0
+}
+
+main() {
+  if [[ "$#" -ne 1 ]]; then
+    return 1
+  fi
+  is_unmanaged_mlx5_bdf "$1"
+}
+
+if [[ "${TEST:-}" != 'test' ]]; then
+  main "$@"
+fi
